@@ -26,6 +26,7 @@ jobs:
         run: |
           sed -i "0,/module = '''/s//module = r'''/" .github/m4-milestone-plan-patch.py
           python .github/m4-milestone-plan-patch.py
+          python .github/m4-milestone-plan-fix.py
       - name: Format
         run: |
           cargo fmt --all
@@ -42,6 +43,7 @@ jobs:
       - name: Publish and self-clean
         run: |
           rm .github/m4-milestone-plan-patch.py
+          rm .github/m4-milestone-plan-fix.py
           rm .github/workflows/m4-milestone-plan.yml
           rm -f .github/.m4-plan-probe
           git config user.name 'Allodium implementation gate'
