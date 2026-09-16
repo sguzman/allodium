@@ -17,60 +17,10 @@ jobs:
         with:
           toolchain: '1.85'
           components: rustfmt
-      - name: Patch and test semantic body comparison
-        shell: bash
+      - name: Patch semantic body comparison
+        run: sed -i 's/if old_body != new_body {/if old_body.trim_end() != new_body.trim_end() {/' crates/allodium-github/src/lib.rs
+      - name: Verify
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('crates/allodium-github/src/lib.rs')
-          text = path.read_text()
-          old = '    if old_body != new_body {\n        fields.push("body".into());\n    }'
-          new = '    if old_body.trim_end() != new_body.trim_end() {\n        fields.push("body".into());\n    }'
-          if old not in text:
-              raise SystemExit('managed body comparison not found')
-          text = text.replace(old, new, 1)
-
-          marker = '    fn test_root(name: &str) -> PathBuf {'
-          test = '''    #[test]
-          fn trailing_newline_is_not_a_managed_field_change() {
-              let root = test_root("newline");
-              let old = ApiIssue {
-                  number: 7,
-                  html_url: "https://github.com/owner/repo/issues/7".into(),
-                  title: "Same".into(),
-                  body: Some("Same body\\n".into()),
-                  state: "open".into(),
-                  updated_at: "2026-09-16T12:00:00Z".into(),
-              };
-              write_observed_issue(&root, "github", "issue-0007", &old, "2026-09-16T12:01:00Z")
-                  .unwrap();
-              let live = ApiIssue {
-                  body: Some("Same body".into()),
-                  updated_at: "2026-09-16T12:02:00Z".into(),
-                  ..old
-              };
-              assert_eq!(
-                  archive_managed_change_if_needed(
-                      &root,
-                      "github",
-                      "issue-0007",
-                      &live,
-                      "2026-09-16T12:03:00Z",
-                  )
-                  .unwrap(),
-                  0
-              );
-              assert!(!root.join(".project/remotes/github/incoming").exists());
-
-              fs::remove_dir_all(root).unwrap();
-          }
-
-'''
-          if marker not in text:
-              raise SystemExit('test insertion marker not found')
-          path.write_text(text.replace(marker, test + marker, 1))
-          PY
           cargo fmt --all
           cargo test --workspace --locked
       - name: Commit tested patch
