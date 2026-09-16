@@ -1,0 +1,13 @@
+schema = "allodium.github.release-managed-change-observation/v0"
+id = "github-release-390189282-managed-change-2026-09-16T20-03-50Z"
+remote = "github"
+kind = "release.managed_fields.changed"
+observed_at = "2026-09-16T20:03:50Z"
+evidence = "GitHub REST Release observation plus resolved Git tag commit; actor is not asserted because this surface does not prove the editor identity."
+canonical_id = "release-0001"
+release_id = 390189282
+url = "https://github.com/sguzman/allodium/releases/tag/untagged-a3bf84ba9e3703ed9ff8"
+fields = [
+    "title",
+    "tag",
+]
