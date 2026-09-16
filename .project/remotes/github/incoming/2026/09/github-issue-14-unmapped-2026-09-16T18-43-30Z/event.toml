@@ -1,0 +1,19 @@
+schema = "allodium.github.unmapped-issue-observation/v0"
+id = "github-issue-14-unmapped-2026-09-16T18-43-30Z"
+remote = "github"
+kind = "issue.unmapped.observed"
+observed_at = "2026-09-16T18:47:15Z"
+evidence = "GitHub REST issue observation has no canonical Allodium mapping; archived as provider-scoped evidence only. No canonical issue or mapping was created."
+title = "Implement GitHub release projection vertical slice"
+state = "open"
+
+[actor]
+remote_id = "41898282"
+login = "github-actions[bot]"
+
+[source]
+remote_object_type = "issue"
+remote_object_id = "14"
+url = "https://github.com/sguzman/allodium/issues/14"
+created_at = "2026-09-16T18:43:30Z"
+updated_at = "2026-09-16T18:43:30Z"

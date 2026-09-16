@@ -13,14 +13,6 @@ Implement the first wiki projection vertical slice without making GitHub Wiki th
 - Wiki assets have an explicit v0 policy; unsupported asset/path cases fail loudly rather than being silently rewritten.
 - At least one real canonical Allodium wiki page is projected to the enabled GitHub Wiki and re-observed idempotently.
 
-## Live dogfood status
-
-The executable wiki contract, offline plan model, Git transport runtime, stale-write guard, and provider-scoped remote-change archive are implemented and passed normal CI.
-
-The first permanent live sync successfully observed the enabled GitHub Wiki surface and planned `update_wiki`, then stopped at an explicit provider bootstrap boundary: GitHub has not created `sguzman/allodium.wiki` yet. GitHub documents that the separate wiki Git repository becomes cloneable only after an initial page is created on GitHub, and the repository resource currently returns `404` before that initialization. Allodium therefore has no supported Git or REST object it can mutate to create the first page. Canonical `.project/wiki/` state was left unchanged.
-
-This issue remains open only for the live projection/re-observation acceptance item. The provider bootstrap prerequisite must not be mistaken for canonical ownership or worked around with undocumented endpoints.
-
 This issue is canonical Allodium state. The GitHub Wiki repository is a transport/projection surface around `.project/wiki/`, not the owner of the wiki.
 
 ---
