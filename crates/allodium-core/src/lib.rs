@@ -66,10 +66,14 @@ pub fn validate(root: impl AsRef<Path>) -> ValidationReport {
                 ));
             }
             if manifest.id.trim().is_empty() {
-                report.errors.push(".project/manifest.toml: id must not be empty".into());
+                report
+                    .errors
+                    .push(".project/manifest.toml: id must not be empty".into());
             }
             if manifest.name.trim().is_empty() {
-                report.errors.push(".project/manifest.toml: name must not be empty".into());
+                report
+                    .errors
+                    .push(".project/manifest.toml: name must not be empty".into());
             }
         }
         Err(error) => report.errors.push(error),
@@ -88,31 +92,47 @@ fn validate_issues(root: &Path, report: &mut ValidationReport) {
         let text = match fs::read_to_string(&record_path) {
             Ok(text) => text,
             Err(error) => {
-                report.errors.push(format!("{}: {error}", record_path.display()));
+                report
+                    .errors
+                    .push(format!("{}: {error}", record_path.display()));
                 continue;
             }
         };
         let issue: IssueRecord = match toml::from_str(&text) {
             Ok(issue) => issue,
             Err(error) => {
-                report.errors.push(format!("{}: {error}", record_path.display()));
+                report
+                    .errors
+                    .push(format!("{}: {error}", record_path.display()));
                 continue;
             }
         };
         if issue.schema != ISSUE_SCHEMA_V0 {
-            report.errors.push(format!("{}: unsupported schema {:?}", record_path.display(), issue.schema));
+            report.errors.push(format!(
+                "{}: unsupported schema {:?}",
+                record_path.display(),
+                issue.schema
+            ));
         }
         if issue.id != expected_id {
             report.errors.push(format!(
                 "{}: id {:?} must match directory {:?}",
-                record_path.display(), issue.id, expected_id
+                record_path.display(),
+                issue.id,
+                expected_id
             ));
         }
         if issue.title.trim().is_empty() {
-            report.errors.push(format!("{}: title must not be empty", record_path.display()));
+            report.errors.push(format!(
+                "{}: title must not be empty",
+                record_path.display()
+            ));
         }
         if !matches!(issue.state.as_str(), "open" | "closed") {
-            report.errors.push(format!("{}: state must be open or closed", record_path.display()));
+            report.errors.push(format!(
+                "{}: state must be open or closed",
+                record_path.display()
+            ));
         }
     }
 }
@@ -125,28 +145,41 @@ fn validate_remotes(root: &Path, report: &mut ValidationReport) {
         let text = match fs::read_to_string(&record_path) {
             Ok(text) => text,
             Err(error) => {
-                report.errors.push(format!("{}: {error}", record_path.display()));
+                report
+                    .errors
+                    .push(format!("{}: {error}", record_path.display()));
                 continue;
             }
         };
         let remote: RemoteRecord = match toml::from_str(&text) {
             Ok(remote) => remote,
             Err(error) => {
-                report.errors.push(format!("{}: {error}", record_path.display()));
+                report
+                    .errors
+                    .push(format!("{}: {error}", record_path.display()));
                 continue;
             }
         };
         if remote.schema != REMOTE_SCHEMA_V0 {
-            report.errors.push(format!("{}: unsupported schema {:?}", record_path.display(), remote.schema));
+            report.errors.push(format!(
+                "{}: unsupported schema {:?}",
+                record_path.display(),
+                remote.schema
+            ));
         }
         if remote.name != expected_name {
             report.errors.push(format!(
                 "{}: name {:?} must match directory {:?}",
-                record_path.display(), remote.name, expected_name
+                record_path.display(),
+                remote.name,
+                expected_name
             ));
         }
         if remote.kind.trim().is_empty() || remote.repository.trim().is_empty() {
-            report.errors.push(format!("{}: kind and repository are required", record_path.display()));
+            report.errors.push(format!(
+                "{}: kind and repository are required",
+                record_path.display()
+            ));
         }
     }
 }
