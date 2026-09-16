@@ -23,7 +23,9 @@ jobs:
           toolchain: '1.85'
           components: rustfmt
       - name: Apply milestone planner patch
-        run: python .github/m4-milestone-plan-patch.py
+        run: |
+          sed -i "0,/module = '''/s//module = r'''/" .github/m4-milestone-plan-patch.py
+          python .github/m4-milestone-plan-patch.py
       - name: Format
         run: |
           cargo fmt --all
