@@ -84,9 +84,16 @@ fn github(args: &[String]) -> ExitCode {
 }
 
 fn github_plan(root: PathBuf, remote_name: &str) -> ExitCode {
-    match allodium_core::github::plan_issues(&root, remote_name)
-        .and_then(|plan| allodium_core::github::plan_to_toml(&plan))
-    {
+    let result = allodium_core::github::plan_issues(&root, remote_name).and_then(|mut plan| {
+        let review_plan = allodium_core::github::plan_reviews(&root, remote_name)?;
+        if plan.remote != review_plan.remote || plan.repository != review_plan.repository {
+            return Err("issue and review projection plans disagree about the GitHub remote".into());
+        }
+        plan.operations.extend(review_plan.operations);
+        Ok(plan)
+    });
+
+    match result.and_then(|plan| allodium_core::github::plan_to_toml(&plan)) {
         Ok(plan) => {
             print!("{plan}");
             ExitCode::SUCCESS
@@ -101,14 +108,23 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
     match result {
         Ok(report) => {
             println!("observed {} GitHub issue(s)", report.issues_observed);
+            println!("observed {} GitHub review(s)", report.reviews_observed);
             println!("archived {} new comment(s)", report.comments_archived);
             println!(
                 "archived {} edited comment revision(s)",
                 report.comment_edits_archived
             );
             println!(
-                "archived {} managed-field remote change(s)",
+                "archived {} missing-comment observation(s)",
+                report.comment_disappearances_archived
+            );
+            println!(
+                "archived {} issue managed-field remote change(s)",
                 report.managed_changes_archived
+            );
+            println!(
+                "archived {} review managed-field remote change(s)",
+                report.review_managed_changes_archived
             );
             println!(
                 "archived {} unmapped GitHub issue revision(s)",
@@ -130,6 +146,9 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
             println!("created {} GitHub issue(s)", report.issues_created);
             println!("updated {} GitHub issue(s)", report.issues_updated);
             println!("observed {} GitHub issue(s)", report.issues_observed);
+            println!("created {} GitHub review(s)", report.reviews_created);
+            println!("updated {} GitHub review(s)", report.reviews_updated);
+            println!("observed {} GitHub review(s)", report.reviews_observed);
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),

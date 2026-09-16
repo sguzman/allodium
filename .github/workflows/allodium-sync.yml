@@ -7,12 +7,15 @@ on:
   issues:
     types: [opened, edited, closed, reopened, labeled, unlabeled, assigned, unassigned, milestoned, demilestoned]
   issue_comment:
-    types: [created, edited]
+    types: [created, edited, deleted]
+  pull_request_target:
+    types: [opened, edited, closed, reopened, synchronize, ready_for_review, converted_to_draft]
   workflow_dispatch:
 
 permissions:
   contents: write
   issues: write
+  pull-requests: write
 
 concurrency:
   group: allodium-github-sync
