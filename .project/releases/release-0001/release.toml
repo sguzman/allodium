@@ -1,0 +1,7 @@
+schema = "allodium.release/v0"
+id = "release-0001"
+title = "Allodium M3 dogfood"
+version = "0.0.0-m3-dogfood"
+state = "draft"
+revision = "33d9e4b4d0199bfa29deb7bafa34fd82a486ca36"
+tag = "v0.0.0-m3-dogfood"
