@@ -551,7 +551,7 @@ fn archive_managed_change_if_needed(
     if old.state != live.state {
         fields.push("state".into());
     }
-    if old_body != new_body {
+    if old_body.trim_end() != new_body.trim_end() {
         fields.push("body".into());
     }
     if fields.is_empty() {
