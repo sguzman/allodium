@@ -1,0 +1,6 @@
+schema = "allodium.remote/v0"
+name = "github"
+kind = "github"
+repository = "sguzman/allodium"
+outbound = "reconcile"
+inbound = "archive"

@@ -1,0 +1,4 @@
+schema = "allodium.project/v0"
+id = "allodium"
+name = "Allodium"
+description = "Filesystem-authoritative project state with external forges as projections."
