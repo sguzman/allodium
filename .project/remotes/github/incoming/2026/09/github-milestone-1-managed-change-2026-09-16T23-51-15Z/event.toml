@@ -1,0 +1,10 @@
+schema = "allodium.github.milestone-managed-change-observation/v0"
+id = "github-milestone-1-managed-change-2026-09-16T23-51-15Z"
+remote = "github"
+kind = "milestone.managed_fields.observed_change"
+observed_at = "2026-09-16T23:52:40Z"
+evidence = "GitHub REST milestone current-state observation changed since the previous local observation; the REST milestone representation does not identify the editing actor, so no actor is asserted."
+canonical_id = "milestone-0001"
+milestone_number = 1
+url = "https://github.com/sguzman/allodium/milestone/1"
+fields = ["title"]
