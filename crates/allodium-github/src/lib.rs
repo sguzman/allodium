@@ -18,6 +18,7 @@ const API_BASE: &str = "https://api.github.com";
 const API_VERSION: &str = "2022-11-28";
 const OBSERVED_REVISION_SCHEMA_V0: &str = "allodium.github.observed-revision/v0";
 const OBSERVED_COMMENT_SCHEMA_V0: &str = "allodium.github.observed-comment/v0";
+const COMMENT_ABSENCE_SCHEMA_V0: &str = "allodium.github.comment-absence-observation/v0";
 const MANAGED_CHANGE_SCHEMA_V0: &str = "allodium.github.managed-change-observation/v0";
 const UNMAPPED_ISSUE_SCHEMA_V0: &str = "allodium.github.unmapped-issue-observation/v0";
 
@@ -34,6 +35,7 @@ pub struct ObserveReport {
     pub issues_observed: usize,
     pub comments_archived: usize,
     pub comment_edits_archived: usize,
+    pub comment_disappearances_archived: usize,
     pub managed_changes_archived: usize,
     pub unmapped_issues_archived: usize,
 }
@@ -65,6 +67,27 @@ struct ObservedComment {
     actor_remote_id: String,
     actor_login: String,
     observed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct CommentAbsenceEvent {
+    schema: String,
+    id: String,
+    remote: String,
+    kind: String,
+    observed_at: String,
+    evidence: String,
+    target: IncomingTarget,
+    last_known_actor: IncomingActor,
+    source: CommentAbsenceSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct CommentAbsenceSource {
+    remote_object_type: String,
+    remote_object_id: String,
+    url: String,
+    last_known_updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -202,7 +225,12 @@ impl GitHubAdapter {
             write_observed_issue(root, remote_name, &canonical_id, &issue, &observed_at)?;
             report.issues_observed += 1;
 
-            for comment in self.fetch_issue_comments(mapping.number)? {
+            let comments = self.fetch_issue_comments(mapping.number)?;
+            let current_comment_ids = comments
+                .iter()
+                .map(|comment| comment.id)
+                .collect::<BTreeSet<_>>();
+            for comment in comments {
                 match archive_comment_observation(
                     root,
                     remote_name,
@@ -216,6 +244,14 @@ impl GitHubAdapter {
                     CommentArchive::Unchanged => {}
                 }
             }
+            report.comment_disappearances_archived += archive_missing_comment_observations(
+                root,
+                remote_name,
+                &canonical_id,
+                mapping.number,
+                &current_comment_ids,
+                &now(),
+            )?;
         }
 
         for issue in self.fetch_repository_issues()? {
@@ -749,6 +785,130 @@ fn archive_managed_change_if_needed(
     Ok(1)
 }
 
+fn archive_missing_comment_observations(
+    root: &Path,
+    remote_name: &str,
+    canonical_id: &str,
+    issue_number: u64,
+    current_comment_ids: &BTreeSet<u64>,
+    observed_at: &str,
+) -> Result<usize, String> {
+    let directory = root
+        .join(".project/remotes")
+        .join(remote_name)
+        .join("observed/comments");
+    if !directory.exists() {
+        return Ok(0);
+    }
+
+    let mut archived = 0;
+    for entry in
+        fs::read_dir(&directory).map_err(|error| format!("{}: {error}", directory.display()))?
+    {
+        let entry = entry.map_err(|error| format!("{}: {error}", directory.display()))?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+            continue;
+        }
+        let text =
+            fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let previous: ObservedComment =
+            toml::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+        if previous.issue_number != issue_number
+            || current_comment_ids.contains(&previous.comment_id)
+        {
+            continue;
+        }
+        let body_path = directory.join(format!("{}.body.md", previous.comment_id));
+        let body = fs::read_to_string(&body_path)
+            .map_err(|error| format!("{}: {error}", body_path.display()))?;
+        if archive_comment_absence(
+            root,
+            remote_name,
+            canonical_id,
+            &previous,
+            &body,
+            observed_at,
+        )? {
+            archived += 1;
+        }
+    }
+    Ok(archived)
+}
+
+fn archive_comment_absence(
+    root: &Path,
+    remote_name: &str,
+    canonical_id: &str,
+    previous: &ObservedComment,
+    body: &str,
+    observed_at: &str,
+) -> Result<bool, String> {
+    let event_id = format!(
+        "{remote_name}-issue-comment-{}-no-longer-observed-after-{}",
+        previous.comment_id,
+        timestamp_slug(&previous.remote_updated_at)
+    );
+    // GitHub supplies no deletion timestamp in a current comment listing. Bucket
+    // by the last known provider revision so repeated absence polls resolve to one event.
+    let event_directory =
+        incoming_directory(root, remote_name, &previous.remote_updated_at, &event_id)?;
+    let event = CommentAbsenceEvent {
+        schema: COMMENT_ABSENCE_SCHEMA_V0.into(),
+        id: event_id,
+        remote: remote_name.into(),
+        kind: "issue.comment.no_longer_observed".into(),
+        observed_at: observed_at.into(),
+        evidence: "A previously observed GitHub issue comment is absent from the current REST comment listing. This proves only that the comment is no longer observed through this surface; no deletion actor or exact deletion time is asserted.".into(),
+        target: IncomingTarget {
+            canonical_id: canonical_id.into(),
+            remote_type: "issue".into(),
+            remote_id: previous.issue_number.to_string(),
+        },
+        last_known_actor: IncomingActor {
+            remote_id: previous.actor_remote_id.clone(),
+            login: previous.actor_login.clone(),
+        },
+        source: CommentAbsenceSource {
+            remote_object_type: "issue_comment".into(),
+            remote_object_id: previous.comment_id.to_string(),
+            url: previous.url.clone(),
+            last_known_updated_at: previous.remote_updated_at.clone(),
+        },
+    };
+    let event_path = event_directory.join("event.toml");
+    let body_path = event_directory.join("last-known.body.md");
+    if event_directory.exists() {
+        let existing_text = fs::read_to_string(&event_path)
+            .map_err(|error| format!("{}: {error}", event_path.display()))?;
+        let existing: CommentAbsenceEvent = toml::from_str(&existing_text)
+            .map_err(|error| format!("{}: {error}", event_path.display()))?;
+        let existing_body = fs::read_to_string(&body_path)
+            .map_err(|error| format!("{}: {error}", body_path.display()))?;
+        let same_evidence = existing.schema == event.schema
+            && existing.id == event.id
+            && existing.remote == event.remote
+            && existing.kind == event.kind
+            && existing.evidence == event.evidence
+            && existing.target == event.target
+            && existing.last_known_actor == event.last_known_actor
+            && existing.source == event.source;
+        if same_evidence && existing_body == body {
+            return Ok(false);
+        }
+        return Err(format!(
+            "comment absence observation collision at {}; stable last-known revision points to different evidence",
+            event_directory.display()
+        ));
+    }
+
+    fs::create_dir_all(&event_directory)
+        .map_err(|error| format!("{}: {error}", event_directory.display()))?;
+    write_toml(&event_path, &event)?;
+    fs::write(&body_path, body).map_err(|error| format!("{}: {error}", body_path.display()))?;
+    Ok(true)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommentArchive {
     Created,
@@ -1170,6 +1330,62 @@ mod tests {
             "stale apply emitted an unexpected second HTTP request: {requests:?}"
         );
         assert!(requests[0].starts_with("GET /repos/owner/repo/issues/7 "));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_comment_is_archived_once_without_claiming_deletion() {
+        let root = test_root("comment-absence");
+        let directory = root.join(".project/remotes/github/observed/comments");
+        fs::create_dir_all(&directory).unwrap();
+        let previous = ObservedComment {
+            schema: OBSERVED_COMMENT_SCHEMA_V0.into(),
+            canonical_id: "issue-0007".into(),
+            issue_number: 7,
+            comment_id: 77,
+            remote_updated_at: "2026-09-16T10:05:00Z".into(),
+            url: "https://github.com/owner/repo/issues/7#issuecomment-77".into(),
+            actor_remote_id: "9".into(),
+            actor_login: "outside-user".into(),
+            observed_at: "2026-09-16T10:06:00Z".into(),
+        };
+        write_toml(directory.join("77.toml"), &previous).unwrap();
+        fs::write(directory.join("77.body.md"), "last known body").unwrap();
+        let current = BTreeSet::new();
+
+        assert_eq!(
+            archive_missing_comment_observations(
+                &root,
+                "github",
+                "issue-0007",
+                7,
+                &current,
+                "2026-09-16T11:00:00Z",
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            archive_missing_comment_observations(
+                &root,
+                "github",
+                "issue-0007",
+                7,
+                &current,
+                "2026-09-17T11:00:00Z",
+            )
+            .unwrap(),
+            0
+        );
+        let event = root.join(
+            ".project/remotes/github/incoming/2026/09/github-issue-comment-77-no-longer-observed-after-2026-09-16T10-05-00Z/event.toml",
+        );
+        let text = fs::read_to_string(event).unwrap();
+        assert!(text.contains("kind = \"issue.comment.no_longer_observed\""));
+        assert!(text.contains("no deletion actor or exact deletion time is asserted"));
+        assert!(directory.join("77.toml").exists());
+        assert!(directory.join("77.body.md").exists());
 
         fs::remove_dir_all(root).unwrap();
     }
