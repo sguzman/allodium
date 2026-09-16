@@ -7,3 +7,7 @@ url = "https://github.com/sguzman/allodium/issues/1"
 [issues.issue-0002]
 number = 2
 url = "https://github.com/sguzman/allodium/issues/2"
+
+[issues.issue-0003]
+number = 3
+url = "https://github.com/sguzman/allodium/issues/3"
