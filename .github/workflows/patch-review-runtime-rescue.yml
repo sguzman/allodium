@@ -34,7 +34,9 @@ jobs:
               out.append(recovered)
               if recovered.count("'''") % 2 == 1:
                   in_triple = not in_triple
-          Path('/tmp/review-runtime-patch.py').write_text('\n'.join(out) + '\n')
+          script = '\n'.join(out) + '\n'
+          script = script.replace("review_tests = '''", "review_tests = r'''", 1)
+          Path('/tmp/review-runtime-patch.py').write_text(script)
           PY
           python /tmp/review-runtime-patch.py
           cargo fmt --all
