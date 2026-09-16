@@ -1,8 +1,8 @@
-use super::{GitHubAdapter, github_api_error, incoming_directory, now, timestamp_slug, write_toml};
+use super::{GitHubAdapter, incoming_directory, now, timestamp_slug, write_toml};
 use allodium_core::github_release::{
-    OBSERVED_RELEASE_SCHEMA_V0, ObservedRelease, ReleaseMapping, ReleaseMappings,
-    load_observed_release, load_release_mappings, require_full_commit_sha,
-    require_github_release_tag, save_release_mappings, write_observed_release_snapshot,
+    OBSERVED_RELEASE_SCHEMA_V0, ObservedRelease, ReleaseMapping, load_observed_release,
+    load_release_mappings, require_full_commit_sha, require_github_release_tag,
+    save_release_mappings, write_observed_release_snapshot,
 };
 use allodium_core::release::CanonicalRelease;
 use serde::{Deserialize, Serialize};
@@ -78,13 +78,8 @@ pub(super) fn observe_releases(
     for (canonical_id, mapping) in mappings.releases {
         let observed_at = now();
         let live = fetch_release(adapter, mapping.id)?;
-        if live.tag_name != mapping.tag {
-            return Err(format!(
-                "GitHub Release {} mapped to {canonical_id:?} now names tag {:?}, but the durable mapping is bound to {:?}",
-                mapping.id, live.tag_name, mapping.tag
-            ));
-        }
-        let (snapshot, notes) = snapshot_from_api(adapter, &canonical_id, &live, &observed_at)?;
+        let (snapshot, notes) =
+            snapshot_from_api(adapter, &canonical_id, &live, &mapping.tag, &observed_at)?;
         report.managed_changes_archived +=
             archive_managed_change_if_needed(root, remote_name, &snapshot, &notes)?;
         write_observed_release_snapshot(root, remote_name, &snapshot, &notes)?;
@@ -135,7 +130,8 @@ pub(super) fn apply_create_release(
     }
 
     let observed_at = now();
-    let (snapshot, notes) = snapshot_from_api(adapter, &release.record.id, &created, &observed_at)?;
+    let (snapshot, notes) =
+        snapshot_from_api(adapter, &release.record.id, &created, tag, &observed_at)?;
     assert_provider_identity_matches_canonical(release, &snapshot)?;
 
     mappings.releases.insert(
@@ -172,7 +168,8 @@ pub(super) fn apply_observe_release(
 
     let live = fetch_release(adapter, release_id)?;
     let observed_at = now();
-    let (snapshot, notes) = snapshot_from_api(adapter, canonical_id, &live, &observed_at)?;
+    let (snapshot, notes) =
+        snapshot_from_api(adapter, canonical_id, &live, &mapping.tag, &observed_at)?;
     archive_managed_change_if_needed(root, remote_name, &snapshot, &notes)?;
     write_observed_release_snapshot(root, remote_name, &snapshot, &notes)
 }
@@ -186,6 +183,8 @@ pub(super) fn apply_update_release(
     fields: &[String],
 ) -> Result<(), String> {
     adapter.require_write_token()?;
+    let canonical_tag = require_github_release_tag(release)?;
+    let canonical_revision = require_full_commit_sha(release)?;
     let (previous, previous_notes) = load_observed_release(root, remote_name, &release.record.id)?
         .ok_or_else(|| {
             format!(
@@ -202,15 +201,28 @@ pub(super) fn apply_update_release(
 
     let live = fetch_release(adapter, release_id)?;
     let live_observed_at = now();
-    let (live_snapshot, live_notes) =
-        snapshot_from_api(adapter, &release.record.id, &live, &live_observed_at)?;
+    let (live_snapshot, live_notes) = snapshot_from_api(
+        adapter,
+        &release.record.id,
+        &live,
+        canonical_tag,
+        &live_observed_at,
+    )?;
     if !same_remote_state(&previous, &previous_notes, &live_snapshot, &live_notes) {
         return Err(format!(
             "refusing stale update of {:?}: GitHub Release changed after the recorded observation; observe and re-plan before applying",
             release.record.id
         ));
     }
-    assert_provider_identity_matches_canonical(release, &live_snapshot)?;
+    if !live_snapshot
+        .commit_sha
+        .eq_ignore_ascii_case(canonical_revision)
+    {
+        return Err(format!(
+            "refusing update of {:?}: mapped canonical tag {canonical_tag:?} resolves to {}, expected {canonical_revision}",
+            release.record.id, live_snapshot.commit_sha
+        ));
+    }
 
     let payload = update_payload(release, fields)?;
     let updated: ApiRelease = adapter.patch(
@@ -218,7 +230,13 @@ pub(super) fn apply_update_release(
         &payload,
     )?;
     let observed_at = now();
-    let (snapshot, notes) = snapshot_from_api(adapter, &release.record.id, &updated, &observed_at)?;
+    let (snapshot, notes) = snapshot_from_api(
+        adapter,
+        &release.record.id,
+        &updated,
+        canonical_tag,
+        &observed_at,
+    )?;
     assert_provider_identity_matches_canonical(release, &snapshot)?;
     write_observed_release_snapshot(root, remote_name, &snapshot, &notes)
 }
@@ -304,12 +322,13 @@ fn snapshot_from_api(
     adapter: &GitHubAdapter,
     canonical_id: &str,
     release: &ApiRelease,
+    identity_tag: &str,
     observed_at: &str,
 ) -> Result<(ObservedRelease, String), String> {
-    let tag = find_repository_tag(adapter, &release.tag_name)?.ok_or_else(|| {
+    let tag = find_repository_tag(adapter, identity_tag)?.ok_or_else(|| {
         format!(
-            "GitHub Release {} names tag {:?}, but that Git tag is not materialized; Allodium cannot establish immutable release identity",
-            release.id, release.tag_name
+            "GitHub Release {} is mapped through tag {identity_tag:?}, but that Git tag is not materialized; Allodium cannot establish immutable release identity",
+            release.id
         )
     })?;
     let notes = release.body.clone().unwrap_or_default();
@@ -350,7 +369,15 @@ fn update_payload(
     release: &CanonicalRelease,
     fields: &[String],
 ) -> Result<serde_json::Value, String> {
+    let tag = require_github_release_tag(release)?;
+    let revision = require_full_commit_sha(release)?;
     let mut object = serde_json::Map::new();
+    // GitHub draft releases can silently fall back to an internal `untagged-*`
+    // attachment when PATCH omits identity fields. Every mutable update therefore
+    // reasserts the canonical attachment while the actual Git ref remains the
+    // immutable identity anchor.
+    object.insert("tag_name".into(), json!(tag));
+    object.insert("target_commitish".into(), json!(revision));
     for field in fields {
         match field.as_str() {
             "title" => {
@@ -365,6 +392,9 @@ fn update_payload(
             }
             "prerelease" => {
                 object.insert("prerelease".into(), json!(false));
+            }
+            "tag" | "revision" => {
+                // Reasserted unconditionally above; never retargeted from provider state.
             }
             other => {
                 return Err(format!(
@@ -534,6 +564,28 @@ mod tests {
         let payload = update_payload(&release, &["state".into()]).unwrap();
         assert_eq!(payload["draft"], false);
         assert_eq!(payload["make_latest"], "false");
+    }
+
+    #[test]
+    fn mutable_update_reasserts_canonical_release_attachment_identity() {
+        const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+        let release = CanonicalRelease {
+            record: allodium_core::release::ReleaseRecord {
+                schema: allodium_core::release::RELEASE_SCHEMA_V0.into(),
+                id: "release-0001".into(),
+                title: "Canonical title".into(),
+                version: "0.1.0".into(),
+                state: "draft".into(),
+                revision: SHA.into(),
+                tag: Some("v0.1.0".into()),
+            },
+            notes: "notes".into(),
+            directory: std::path::PathBuf::new(),
+        };
+        let payload = update_payload(&release, &["title".into()]).unwrap();
+        assert_eq!(payload["name"], "Canonical title");
+        assert_eq!(payload["tag_name"], "v0.1.0");
+        assert_eq!(payload["target_commitish"], SHA);
     }
 
     #[test]

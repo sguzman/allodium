@@ -254,14 +254,17 @@ fn plan_release(
             "observed GitHub Release snapshot for {canonical_id:?} disagrees with its mapping"
         ));
     }
-    if observed.tag_name != tag || observed.commit_sha != revision {
+    if !observed.commit_sha.eq_ignore_ascii_case(revision) {
         return Err(format!(
-            "GitHub Release identity drift for {canonical_id:?}: canonical tag/revision is {tag:?}@{revision}, observed provider identity is {:?}@{}; projection v0 refuses to retarget release history",
-            observed.tag_name, observed.commit_sha
+            "GitHub Release immutable identity drift for {canonical_id:?}: mapped tag {tag:?} now resolves to {}, canonical revision is {revision}; projection v0 refuses to retarget release history",
+            observed.commit_sha
         ));
     }
 
     let mut fields = Vec::new();
+    if observed.tag_name != tag {
+        fields.push("tag".into());
+    }
     if observed.name != release.record.title {
         fields.push("title".into());
     }
@@ -372,6 +375,39 @@ mod tests {
         assert!(plan.operations[0].fields.contains(&"notes".into()));
         assert!(plan.operations[0].fields.contains(&"state".into()));
         assert!(plan.operations[0].fields.contains(&"prerelease".into()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn provider_attachment_tag_drift_plans_repair_when_mapped_tag_anchor_is_intact() {
+        let root = test_project("attachment-tag-drift", Some("v0.1.0"), SHA);
+        save_mapping(&root, "v0.1.0");
+        let observed = ObservedRelease {
+            schema: OBSERVED_RELEASE_SCHEMA_V0.into(),
+            canonical_id: "release-0001".into(),
+            id: 42,
+            url: "https://example.invalid/release".into(),
+            name: "0.1.0".into(),
+            tag_name: "untagged-provider-slug".into(),
+            commit_sha: SHA.into(),
+            draft: false,
+            prerelease: false,
+            published_at: Some("2026-09-16T00:00:00Z".into()),
+            observed_at: "2026-09-16T00:00:00Z".into(),
+        };
+        write_observed_release_snapshot(
+            &root,
+            "github",
+            &observed,
+            "Release notes
+",
+        )
+        .unwrap();
+
+        let plan = plan_releases(&root, "github").unwrap();
+        assert_eq!(plan.operations.len(), 1);
+        assert_eq!(plan.operations[0].action, "update_release");
+        assert!(plan.operations[0].fields.contains(&"tag".into()));
         fs::remove_dir_all(root).unwrap();
     }
 
