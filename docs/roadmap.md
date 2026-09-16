@@ -81,10 +81,13 @@ The Release vertical slice is complete. Canonical `release-0001` projected to a 
 
 ## M4 — Broader GitHub surface
 
-- Milestones and labels as first-class canonical objects.
-- Discussions where API semantics are sufficient.
-- Project/board model after careful ontology work.
-- Better webhook/event-driven ingress where useful.
+- [x] Milestones as first-class canonical objects with live GitHub create/update/close projection, stale-write protection, provider-drift archival/repair, and idempotent dogfood.
+- [ ] Labels as first-class canonical objects.
+- [ ] Discussions where API semantics are sufficient.
+- [ ] Project/board model after careful ontology work.
+- [ ] Better webhook/event-driven ingress where useful.
+
+The Milestone vertical slice is complete. Canonical `milestone-0001` projected to GitHub Milestone #1, survived deliberate provider-only title drift with preserved before/after evidence and canonical repair, and closed downstream only after canonical state changed to `closed`. Live dogfood also established the GitHub `due_on` boundary: absent canonical due dates omit the provider field, present dates use a deterministic end-of-day UTC representation, and v0 refuses to guess an undocumented null-based due-date clear.
 
 ## M5 — Second forge
 
