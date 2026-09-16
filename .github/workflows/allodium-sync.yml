@@ -6,6 +6,8 @@ on:
     types: [completed]
   issues:
     types: [opened, edited, closed, reopened, labeled, unlabeled, assigned, unassigned, milestoned, demilestoned]
+  milestone:
+    types: [created, edited, opened, closed]
   issue_comment:
     types: [created, edited, deleted]
   pull_request_target:
