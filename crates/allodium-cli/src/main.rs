@@ -106,6 +106,14 @@ fn github_plan(root: PathBuf, remote_name: &str) -> ExitCode {
             );
         }
         plan.operations.extend(release_plan.operations);
+
+        let milestone_plan = allodium_core::github_milestone::plan_milestones(&root, remote_name)?;
+        if plan.remote != milestone_plan.remote || plan.repository != milestone_plan.repository {
+            return Err(
+                "GitHub milestone projection plan disagrees about the configured remote".into(),
+            );
+        }
+        plan.operations.extend(milestone_plan.operations);
         Ok(plan)
     });
 

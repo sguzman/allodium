@@ -1,4 +1,5 @@
 pub mod github;
+pub mod github_milestone;
 pub mod github_release;
 pub mod github_wiki;
 pub mod milestone;
