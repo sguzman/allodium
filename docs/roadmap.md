@@ -66,16 +66,18 @@ M2 is complete. A real canonical review was projected to GitHub PR #7, social/re
 - [x] Define an explicit v0 asset/path policy: top-level Markdown only, unsupported assets/nesting fail loudly.
 - [ ] Project the real Allodium canonical wiki to GitHub Wiki and re-observe idempotently.
 
-The final live wiki item is currently blocked by a GitHub bootstrap prerequisite rather than by Allodium reconciliation. GitHub does not expose the separate `allodium.wiki` Git repository until an initial page has been created on GitHub; before that initialization the repository resource is absent. Allodium deliberately does not work around this with undocumented provider endpoints.
+The final live wiki item is currently blocked by a GitHub bootstrap prerequisite rather than by Allodium reconciliation. GitHub does not expose the separate `allodium.wiki` Git repository until an initial page has been created on GitHub; before that initialization the repository resource is absent. Allodium deliberately does not work around this with undocumented provider endpoints. The permanent reconciliation plan surfaces this as the non-mutating `wiki_bootstrap_required` operation so the blocked Wiki surface cannot prevent issues, reviews, or releases from reconciling.
 
 ### Releases
 
-- [ ] Make canonical release records and notes executable in validation.
-- [ ] Define Git tag/revision relationship rules for the GitHub v0 adapter.
-- [ ] Add network-free GitHub Release planning plus provider-scoped mappings/observations.
-- [ ] Add GitHub Release create/update runtime with optimistic stale-state refusal.
-- [ ] Preserve provider-side managed release changes as incoming evidence.
-- [ ] Dogfood one canonical Allodium release into a real GitHub draft release and re-observe idempotently.
+- [x] Make canonical release records and notes executable in validation.
+- [x] Define Git tag/revision relationship rules for the GitHub v0 adapter.
+- [x] Add network-free GitHub Release planning plus provider-scoped mappings/observations.
+- [x] Add GitHub Release create/update runtime with optimistic stale-state refusal.
+- [x] Preserve provider-side managed release changes as incoming evidence.
+- [x] Dogfood one canonical Allodium release into a real GitHub draft release and re-observe idempotently.
+
+The Release vertical slice is complete. Canonical `release-0001` projected to a real GitHub draft release and exact Git tag/revision, survived a deliberate provider-only title edit, archived that drift before repair, and converged to a no-op Release plan on a clean helper-free reconciliation run. Live dogfood exposed a GitHub draft-release quirk: PATCHing mutable fields can replace the Release object's `tag_name` with an internal `untagged-*` attachment slug even while the real Git ref remains intact. Allodium therefore treats the mapped Git tag ref as the immutable provider identity anchor and the Release object's `tag_name` as provider attachment state that is observed, archived when it drifts, and repaired by reasserting canonical `tag_name` plus `target_commitish` on mutable updates.
 
 ## M4 — Broader GitHub surface
 
