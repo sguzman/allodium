@@ -1,0 +1,5 @@
+schema = "allodium.issue/v0"
+id = "issue-9999"
+title = "Fixture issue"
+state = "open"
+labels = ["fixture"]
