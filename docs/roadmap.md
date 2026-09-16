@@ -44,13 +44,15 @@ M1 is complete. Remaining GitHub issue work belongs either to hardening discover
 
 ## M2 — Reviews / pull requests
 
-- Canonical review format.
-- Project review to GitHub PR.
-- PR conversation ingestion.
-- Review submission ingestion.
-- Inline review thread ingestion.
-- Merge/close state reconciliation.
-- Preserve GitHub-local social state without cross-forge impersonation.
+- [x] Canonical review format.
+- [x] Project review to GitHub PR.
+- [x] PR conversation ingestion.
+- [x] Review submission ingestion.
+- [x] Inline review thread ingestion.
+- [x] Merge/close state reconciliation.
+- [x] Preserve GitHub-local social state without cross-forge impersonation.
+
+M2 is complete. A real canonical review was projected to GitHub PR #7, social/review ingress was archived as provider-scoped evidence, canonical close was reconciled outward, external reopen was archived then overridden by canonical state, and merged PR state is preserved as terminal remote evidence rather than treated as canonical merge identity.
 
 ## M3 — Wiki and releases
 
