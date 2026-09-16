@@ -63,7 +63,29 @@ jobs:
             git restore .project/remotes/github
             exit 0
           fi
+
           git config user.name 'Allodium automation'
           git config user.email 'actions@users.noreply.github.com'
           git commit -m 'chore(allodium): sync GitHub projection state'
-          git push
+
+          # main is not a lock. Canonical work may land while observation is running.
+          # Replay only this generated state commit onto the newest main; never force-push.
+          for attempt in 1 2 3; do
+            echo "Sync state push attempt ${attempt}/3"
+            git fetch origin main
+            if ! git rebase origin/main; then
+              echo 'Generated remote state conflicts with newer main; refusing to guess.' >&2
+              git rebase --abort || true
+              exit 1
+            fi
+
+            cargo run --locked -p allodium-cli -- validate .
+
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+
+          echo 'main kept moving after three safe rebase attempts; refusing force-push.' >&2
+          exit 1
