@@ -1,7 +1,7 @@
 schema = "allodium.github.observed-issue/v0"
 canonical_id = "issue-0005"
 number = 6
-state = "open"
+state = "closed"
 title = "Implement GitHub review projection vertical slice"
 url = "https://github.com/sguzman/allodium/issues/6"
-observed_at = "2026-09-16T16:47:50Z"
+observed_at = "2026-09-16T16:54:26Z"
