@@ -92,6 +92,12 @@ fn github_plan(root: PathBuf, remote_name: &str) -> ExitCode {
             );
         }
         plan.operations.extend(review_plan.operations);
+
+        let wiki_plan = allodium_core::github_wiki::plan_wiki(&root, remote_name)?;
+        if plan.remote != wiki_plan.remote || plan.repository != wiki_plan.repository {
+            return Err("GitHub wiki projection plan disagrees about the configured remote".into());
+        }
+        plan.operations.extend(wiki_plan.operations);
         Ok(plan)
     });
 
@@ -111,6 +117,11 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
         Ok(report) => {
             println!("observed {} GitHub issue(s)", report.issues_observed);
             println!("observed {} GitHub review(s)", report.reviews_observed);
+            println!("observed {} GitHub wiki(s)", report.wikis_observed);
+            println!(
+                "archived {} GitHub Wiki remote-tree change(s)",
+                report.wiki_remote_changes_archived
+            );
             println!(
                 "archived {} PR conversation-comment snapshot(s)",
                 report.review_conversation_comment_snapshots_archived
@@ -171,6 +182,8 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
             println!("created {} GitHub review(s)", report.reviews_created);
             println!("updated {} GitHub review(s)", report.reviews_updated);
             println!("observed {} GitHub review(s)", report.reviews_observed);
+            println!("observed {} GitHub wiki(s)", report.wikis_observed);
+            println!("updated {} GitHub wiki(s)", report.wikis_updated);
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),

@@ -1,4 +1,5 @@
 mod review_ingress;
+mod wiki;
 
 use allodium_core::github::{
     ArchiveOutcome, GitHubPlan, INCOMING_EVENT_SCHEMA_V0, ISSUE_MAPPINGS_SCHEMA_V0, IncomingActor,
@@ -38,6 +39,8 @@ pub struct GitHubAdapter {
 pub struct ObserveReport {
     pub issues_observed: usize,
     pub reviews_observed: usize,
+    pub wikis_observed: usize,
+    pub wiki_remote_changes_archived: usize,
     pub review_conversation_comment_snapshots_archived: usize,
     pub review_submission_snapshots_archived: usize,
     pub review_inline_comment_snapshots_archived: usize,
@@ -59,6 +62,8 @@ pub struct ApplyReport {
     pub reviews_created: usize,
     pub reviews_updated: usize,
     pub reviews_observed: usize,
+    pub wikis_observed: usize,
+    pub wikis_updated: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -328,6 +333,10 @@ impl GitHubAdapter {
             }
         }
 
+        let wiki_report = wiki::observe_wiki(self, root, remote_name)?;
+        report.wikis_observed += wiki_report.observed;
+        report.wiki_remote_changes_archived += wiki_report.remote_changes_archived;
+
         Ok(report)
     }
 
@@ -501,6 +510,14 @@ impl GitHubAdapter {
                         &now(),
                     )?;
                     report.reviews_updated += 1;
+                }
+                "observe_wiki" => {
+                    let wiki_report = wiki::observe_wiki(self, root, &plan.remote)?;
+                    report.wikis_observed += wiki_report.observed;
+                }
+                "update_wiki" => {
+                    wiki::apply_wiki_update(self, root, &plan.remote)?;
+                    report.wikis_updated += 1;
                 }
                 other => return Err(format!("unsupported GitHub plan operation {other:?}")),
             }
