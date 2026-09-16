@@ -32,8 +32,13 @@ Goal: one canonical issue can be projected to GitHub and externally originated i
 - [x] Dry-run plan output before mutations.
 - [x] Idempotent reconciliation tests.
 - [x] Explicit plan-file apply with optimistic GitHub revision guard.
-- [ ] Dogfood live adapter observation and plan application end-to-end.
-- [ ] Add HTTP-level adapter tests with a local fake server.
+- [x] Dogfood live adapter observation and plan application end-to-end.
+- [x] Prove filesystem-only canonical issue creation, update, and close through the automatic GitHub projection workflow.
+- [x] Archive GitHub-created unmapped issues as provider-scoped evidence without silently creating canonical issues or mappings.
+- [x] Archive previously observed comments that disappear from the REST listing as `no_longer_observed` evidence without asserting a deletion actor or deletion timestamp.
+- [x] Add HTTP-level stale-write coverage with a local fake server and prove no PATCH is sent after a revision mismatch.
+
+M1 is complete. Remaining GitHub issue work belongs either to hardening discovered by later dogfood or to broader object types in subsequent milestones.
 
 ## M2 — Reviews / pull requests
 
