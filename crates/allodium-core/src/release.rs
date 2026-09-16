@@ -50,8 +50,8 @@ pub fn load_releases(root: impl AsRef<Path>) -> Result<Vec<CanonicalRelease>, St
         let notes_path = directory.join("notes.md");
         let text = fs::read_to_string(&record_path)
             .map_err(|error| format!("{}: {error}", record_path.display()))?;
-        let record: ReleaseRecord = toml::from_str(&text)
-            .map_err(|error| format!("{}: {error}", record_path.display()))?;
+        let record: ReleaseRecord =
+            toml::from_str(&text).map_err(|error| format!("{}: {error}", record_path.display()))?;
         let notes = fs::read_to_string(&notes_path)
             .map_err(|error| format!("{}: {error}", notes_path.display()))?;
         releases.push(CanonicalRelease {
@@ -174,7 +174,12 @@ mod tests {
 
         let report = crate::validate(&root);
         assert!(!report.is_ok());
-        assert!(report.errors.iter().any(|error| error.contains("must match directory")));
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("must match directory"))
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -187,7 +192,12 @@ mod tests {
 
         let report = crate::validate(&root);
         assert!(!report.is_ok());
-        assert!(report.errors.iter().any(|error| error.contains("duplicate canonical release tag")));
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("duplicate canonical release tag"))
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -195,7 +205,11 @@ mod tests {
     fn write_release(root: &Path, id: &str, version: &str, tag: Option<&str>) {
         let directory = root.join(".project/releases").join(id);
         fs::create_dir_all(&directory).unwrap();
-        fs::write(directory.join("release.toml"), release_record(id, version, tag)).unwrap();
+        fs::write(
+            directory.join("release.toml"),
+            release_record(id, version, tag),
+        )
+        .unwrap();
         fs::write(directory.join("notes.md"), "Release notes\n").unwrap();
     }
 
