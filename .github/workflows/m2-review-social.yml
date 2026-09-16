@@ -32,11 +32,14 @@ jobs:
         run: cargo test --locked --workspace
       - name: Validate Allodium state
         run: cargo run --locked -p allodium-cli -- validate .
-      - name: Commit product patch and remove helper
+      - name: Commit source patch
         shell: bash
         run: |
-          git rm .github/allodium-m2-review-social.py .github/workflows/m2-review-social.yml
-          git add crates/allodium-github/src/lib.rs crates/allodium-github/src/review_ingress.rs crates/allodium-cli/src/main.rs .github/workflows/allodium-sync.yml
+          # The connected GitHub authority will update workflow triggers separately.
+          # This Actions token has contents permission but GitHub forbids it from
+          # modifying workflow files, so keep the tested workflow edit out of this commit.
+          git restore .github/workflows/allodium-sync.yml
+          git add crates/allodium-github/src/lib.rs crates/allodium-github/src/review_ingress.rs crates/allodium-cli/src/main.rs
           git config user.name 'Allodium implementation gate'
           git config user.email 'actions@users.noreply.github.com'
           git commit -m 'feat(github): archive pull request social provenance'
@@ -45,7 +48,7 @@ jobs:
             git fetch origin main
             if ! git rebase origin/main; then
               git rebase --abort || true
-              echo 'Product patch conflicts with newer main; refusing to guess.' >&2
+              echo 'Product source patch conflicts with newer main; refusing to guess.' >&2
               exit 1
             fi
             cargo fmt --all -- --check
