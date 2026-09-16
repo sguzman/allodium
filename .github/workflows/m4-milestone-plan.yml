@@ -1,0 +1,48 @@
+name: M4 milestone planner gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/m4-milestone-plan-patch.py'
+      - '.github/workflows/m4-milestone-plan.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+      - name: Apply milestone planner patch
+        run: python .github/m4-milestone-plan-patch.py
+      - name: Format
+        run: |
+          cargo fmt --all
+          cargo fmt --all -- --check
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Validate Allodium state
+        run: cargo run --locked -p allodium-cli -- validate .
+      - name: Smoke combined GitHub plan
+        run: |
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/plan.toml
+          grep -q 'action = "create_milestone"' /tmp/plan.toml
+          grep -q 'action = "wiki_bootstrap_required"' /tmp/plan.toml
+      - name: Publish and self-clean
+        run: |
+          rm .github/m4-milestone-plan-patch.py
+          rm .github/workflows/m4-milestone-plan.yml
+          git config user.name 'Allodium implementation gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat(github): add milestone projection planner'
+          git pull --rebase origin main
+          git push origin HEAD:main
