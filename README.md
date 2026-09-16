@@ -27,7 +27,7 @@ Authoritative state therefore lives in plain directories, TOML, Markdown, and ot
 
 ## GitHub is the first projection
 
-Allodium is intentionally being developed with GitHub in mind first. That is not an attempt to hide GitHub behind a prematurely generic abstraction. GitHub is the first real projection target and will drive the first complete implementation of issues, pull-request-shaped reviews, wiki projection, releases, and inbound collaboration capture.
+Allodium is intentionally being developed with GitHub in mind first. That is not an attempt to hide GitHub behind a prematurely generic abstraction. GitHub is the first real projection target and drives the first complete implementation of issues, pull-request-shaped reviews, wiki projection, releases, and inbound collaboration capture.
 
 The architecture nevertheless keeps GitHub downstream of `.project/`. A future GitLab or Forgejo adapter should consume the same canonical state rather than introduce a second source of truth.
 
@@ -50,19 +50,24 @@ The architecture nevertheless keeps GitHub downstream of `.project/`. A future G
       observed/             reconstructible current remote observations
 
 docs/                       Allodium's own design documentation
-crates/                     implementation
+crates/
+  allodium-core/            filesystem model, validation, pure planning
+  allodium-github/          GitHub REST observation/application adapter
+  allodium-cli/             command-line surface
 .github/                    thin GitHub-specific execution glue
 ```
 
 ## Current status
 
-M0 established the constitutional filesystem substrate. M1 is implementing the first GitHub issue reconciliation vertical slice.
+M1 now has the first complete code path for GitHub Issues: observe remote state and comments, derive a filesystem-only plan, and apply an explicit plan with an optimistic remote revision guard.
 
 ```bash
 cargo run -p allodium-cli -- validate .
-cargo run -p allodium-cli -- github plan .
+cargo run -p allodium-cli -- github observe .
+cargo run -p allodium-cli -- github plan . > plan.toml
+cargo run -p allodium-cli -- github apply plan.toml .
 ```
 
-`github plan` emits a serializable dry-run document. It compares canonical issue files against checked-in GitHub mappings and observations without making network calls or silently adopting remote state.
+GitHub credentials, when required, come from the process environment and are never canonical project state. See [`docs/github-runtime.md`](docs/github-runtime.md) for the authentication and concurrency boundary.
 
-See [`docs/design-principles.md`](docs/design-principles.md), [`docs/format.md`](docs/format.md), [`docs/github-projection.md`](docs/github-projection.md), and [`docs/roadmap.md`](docs/roadmap.md).
+See [`docs/design-principles.md`](docs/design-principles.md), [`docs/format.md`](docs/format.md), [`docs/github-projection.md`](docs/github-projection.md), [`docs/ingress-and-provenance.md`](docs/ingress-and-provenance.md), and [`docs/roadmap.md`](docs/roadmap.md).

@@ -10,3 +10,4 @@ path = "src/main.rs"
 
 [dependencies]
 allodium-core = { path = "../allodium-core" }
+allodium-github = { path = "../allodium-github" }

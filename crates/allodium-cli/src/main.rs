@@ -63,6 +63,14 @@ fn github(args: &[String]) -> ExitCode {
             root_arg(args, 2),
             args.get(3).map(String::as_str).unwrap_or("github"),
         ),
+        "observe" => github_observe(
+            root_arg(args, 2),
+            args.get(3).map(String::as_str).unwrap_or("github"),
+        ),
+        "apply" => github_apply(
+            PathBuf::from(args.get(2).map(String::as_str).unwrap_or("plan.toml")),
+            root_arg(args, 3),
+        ),
         "help" | "--help" | "-h" => {
             print_github_help();
             ExitCode::SUCCESS
@@ -83,11 +91,47 @@ fn github_plan(root: PathBuf, remote_name: &str) -> ExitCode {
             print!("{plan}");
             ExitCode::SUCCESS
         }
-        Err(error) => {
-            eprintln!("error: {error}");
-            ExitCode::FAILURE
-        }
+        Err(error) => fail(error),
     }
+}
+
+fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
+    let result = allodium_github::GitHubAdapter::from_project(&root, remote_name)
+        .and_then(|adapter| adapter.observe(&root, remote_name));
+    match result {
+        Ok(report) => {
+            println!("observed {} GitHub issue(s)", report.issues_observed);
+            println!("archived {} new comment(s)", report.comments_archived);
+            println!("archived {} edited comment revision(s)", report.comment_edits_archived);
+            println!(
+                "archived {} managed-field remote change(s)",
+                report.managed_changes_archived
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => fail(error),
+    }
+}
+
+fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
+    let result = allodium_github::load_plan(&plan_path).and_then(|plan| {
+        allodium_github::GitHubAdapter::from_project(&root, &plan.remote)
+            .and_then(|adapter| adapter.apply(&root, &plan))
+    });
+    match result {
+        Ok(report) => {
+            println!("created {} GitHub issue(s)", report.issues_created);
+            println!("updated {} GitHub issue(s)", report.issues_updated);
+            println!("observed {} GitHub issue(s)", report.issues_observed);
+            ExitCode::SUCCESS
+        }
+        Err(error) => fail(error),
+    }
+}
+
+fn fail(error: String) -> ExitCode {
+    eprintln!("error: {error}");
+    ExitCode::FAILURE
 }
 
 fn root_arg(args: &[String], index: usize) -> PathBuf {
@@ -101,6 +145,8 @@ fn print_help() {
     println!("  allodium validate [ROOT]");
     println!("  allodium inspect  [ROOT]");
     println!("  allodium github plan [ROOT] [REMOTE]");
+    println!("  allodium github observe [ROOT] [REMOTE]");
+    println!("  allodium github apply PLAN [ROOT]");
 }
 
 fn print_github_help() {
@@ -108,4 +154,6 @@ fn print_github_help() {
     println!();
     println!("USAGE:");
     println!("  allodium github plan [ROOT] [REMOTE]");
+    println!("  allodium github observe [ROOT] [REMOTE]");
+    println!("  allodium github apply PLAN [ROOT]");
 }

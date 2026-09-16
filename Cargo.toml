@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/allodium-core",
+    "crates/allodium-github",
     "crates/allodium-cli",
 ]
 
@@ -10,5 +11,8 @@ edition = "2024"
 rust-version = "1.85"
 
 [workspace.dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"

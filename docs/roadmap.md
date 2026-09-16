@@ -21,17 +21,19 @@ Goal: freeze enough of the philosophy and filesystem contract that implementatio
 
 Goal: one canonical issue can be projected to GitHub and externally originated issue activity can return to the repository with provenance.
 
-- [ ] GitHub authentication boundary.
-- [ ] Canonical issue create/update/close projection.
+- [x] GitHub authentication boundary with non-persistent environment credentials.
+- [x] Canonical issue create/update/close API implementation.
 - [x] Stable mapping files.
 - [x] Define exact observed issue snapshot format, including body.
-- [ ] Fetch/refresh remote issue observations through the adapter.
+- [x] Fetch/refresh remote issue observations through a dedicated GitHub adapter.
 - [x] Define and implement idempotent external-comment provenance archival.
 - [x] Dogfood one real GitHub comment into the incoming filesystem archive.
-- [ ] Capture externally changed managed fields without silently accepting them as canonical.
+- [x] Capture externally changed managed fields without silently accepting them as canonical.
 - [x] Dry-run plan output before mutations.
 - [x] Idempotent reconciliation tests.
-- [ ] Apply a plan through the GitHub API.
+- [x] Explicit plan-file apply with optimistic GitHub revision guard.
+- [ ] Dogfood live adapter observation and plan application end-to-end.
+- [ ] Add HTTP-level adapter tests with a local fake server.
 
 ## M2 — Reviews / pull requests
 
