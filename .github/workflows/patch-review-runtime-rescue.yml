@@ -22,7 +22,20 @@ jobs:
       - name: Recover and run runtime patch
         shell: bash
         run: |
-          python -c 'from pathlib import Path; lines=Path(".github/workflows/patch-review-runtime-once.yml").read_text().splitlines(); start=next(i for i,x in enumerate(lines) if x.strip()=="python - <<'"'"'PY'"'"'")+1; end=next(i for i in range(start,len(lines)) if lines[i].strip()=="PY"); out=[x[10:] if x.startswith("          ") else x for x in lines[start:end]]; Path("/tmp/review-runtime-patch.py").write_text("\n".join(out)+"\n")'
+          python - <<'PY'
+          from pathlib import Path
+          lines = Path('.github/workflows/patch-review-runtime-once.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(lines) if line.strip() == "python - <<'PY'") + 1
+          end = next(i for i in range(start, len(lines)) if lines[i].strip() == 'PY')
+          out = []
+          in_triple = False
+          for line in lines[start:end]:
+              recovered = line if in_triple else (line[10:] if line.startswith('          ') else line)
+              out.append(recovered)
+              if recovered.count("'''") % 2 == 1:
+                  in_triple = not in_triple
+          Path('/tmp/review-runtime-patch.py').write_text('\n'.join(out) + '\n')
+          PY
           python /tmp/review-runtime-patch.py
           cargo fmt --all
           cargo fmt --all -- --check
