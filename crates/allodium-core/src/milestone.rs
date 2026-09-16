@@ -1,16 +1,4 @@
-from pathlib import Path
-
-lib = Path("crates/allodium-core/src/lib.rs")
-text = lib.read_text()
-if "pub mod milestone;" not in text:
-    text = text.replace("pub mod github_wiki;\n", "pub mod github_wiki;\npub mod milestone;\n", 1)
-needle = "    release::validate_releases(root, &mut report);\n"
-if "milestone::validate_milestones(root, &mut report);" not in text:
-    assert needle in text
-    text = text.replace(needle, "    milestone::validate_milestones(root, &mut report);\n" + needle, 1)
-lib.write_text(text)
-
-Path("crates/allodium-core/src/milestone.rs").write_text(r'''use crate::ValidationReport;
+use crate::ValidationReport;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -40,7 +28,10 @@ pub fn load_milestones(root: impl AsRef<Path>) -> Result<Vec<CanonicalMilestone>
         return Ok(Vec::new());
     }
     if !milestones_dir.is_dir() {
-        return Err(format!("{}: expected a directory", milestones_dir.display()));
+        return Err(format!(
+            "{}: expected a directory",
+            milestones_dir.display()
+        ));
     }
 
     let mut entries = fs::read_dir(&milestones_dir)
@@ -189,7 +180,12 @@ mod tests {
 
         let report = crate::validate(&root);
         assert!(!report.is_ok());
-        assert!(report.errors.iter().any(|error| error.contains("must match directory")));
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("must match directory"))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -200,20 +196,36 @@ mod tests {
 
         let report = crate::validate(&root);
         assert!(!report.is_ok());
-        assert!(report.errors.iter().any(|error| error.contains("state must be open or closed")));
-        assert!(report.errors.iter().any(|error| error.contains("ISO 8601 calendar date")));
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("state must be open or closed"))
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("ISO 8601 calendar date"))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
     fn write_milestone(root: &Path, id: &str, state: &str, due: Option<&str>) {
         let directory = root.join(".project/milestones").join(id);
         fs::create_dir_all(&directory).unwrap();
-        fs::write(directory.join("milestone.toml"), milestone_record(id, state, due)).unwrap();
+        fs::write(
+            directory.join("milestone.toml"),
+            milestone_record(id, state, due),
+        )
+        .unwrap();
         fs::write(directory.join("description.md"), "Milestone description\n").unwrap();
     }
 
     fn milestone_record(id: &str, state: &str, due: Option<&str>) -> String {
-        let due = due.map(|due| format!("due = \"{due}\"\n")).unwrap_or_default();
+        let due = due
+            .map(|due| format!("due = \"{due}\"\n"))
+            .unwrap_or_default();
         format!(
             "schema = \"allodium.milestone/v0\"\nid = \"{id}\"\ntitle = \"Test milestone\"\nstate = \"{state}\"\n{due}"
         )
@@ -249,4 +261,3 @@ mod tests {
         root
     }
 }
-''')
