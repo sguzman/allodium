@@ -24,6 +24,8 @@ When the provider supplies a stable object/event identifier, Allodium derives a 
 
 If an event directory already exists with byte-identical normalized metadata and body, ingestion is a no-op. If the same derived identity points at different evidence, Allodium reports a collision rather than silently rewriting history.
 
+For GitHub issues that have no canonical Allodium mapping, the provider issue number plus GitHub's `updated_at` identifies one observed provider revision. The event directory is bucketed by that provider revision timestamp, not by the local poll time. Re-observing the same remote revision on a later day therefore resolves to the same event instead of manufacturing new history.
+
 ## Evidence discipline
 
 Allodium must distinguish:
@@ -35,7 +37,35 @@ Allodium must distinguish:
 
 The system must not fabricate an edit event merely because two polls returned different text. It may record an observation change with timestamps and explicitly state that the exact mutation time is unknown.
 
+Representation-only differences are not project history. For example, a trailing newline added or omitted by a serialization boundary must not become a claimed remote body edit when the durable text is otherwise equivalent.
+
 Missing provider fields remain missing. For example, if the adapter receives a comment but the integration surface does not expose its provider `created_at`, the normalized event omits `source.created_at` and records the limitation in `evidence`; it does not substitute the local capture time and pretend that was the provider creation time.
+
+## Unmapped remote issues
+
+A forge can contain issues that were created outside Allodium and therefore have no canonical `.project/issues/<id>/` object and no canonical-to-remote mapping. Discovery of such an issue is **ingress, not promotion**.
+
+For GitHub, Allodium lists repository issues in addition to observing its mapped projections. A GitHub issue that is not a pull request and whose number is absent from the mapping table is archived under the GitHub remote namespace as provider-scoped evidence:
+
+```text
+.project/remotes/github/incoming/YYYY/MM/
+  github-issue-<number>-unmapped-<provider-updated-at>/
+    event.toml
+    body.md
+```
+
+The event records the provider issue number, URL, title, state, actor identity exposed by GitHub, provider creation/update timestamps, local first-observation time, and an explicit evidence statement that no canonical mapping existed.
+
+This operation MUST NOT:
+
+- create `.project/issues/*`;
+- create or modify a canonical-to-GitHub mapping;
+- treat remote title/body/state as canonical project state;
+- infer that a remote author intended adoption into Allodium.
+
+A later GitHub revision with a different provider `updated_at` becomes another append-only event. Re-observing an already archived revision is a no-op. If the same deterministic revision identity points to different durable evidence, Allodium reports a collision rather than rewriting the first capture.
+
+Adoption of an unmapped remote issue requires an explicit future promotion/adoption operation.
 
 ## Provider-scoped identity
 
@@ -56,7 +86,7 @@ Adapters may optionally retain a `raw.json` payload beside a normalized event. R
 
 Normalized event metadata must be sufficient for normal human inspection even when raw retention is disabled.
 
-## First dogfood event
+## Dogfood evidence
 
 Allodium's repository deliberately created a real comment on GitHub Issue #2 and archived it under:
 
@@ -66,7 +96,18 @@ Allodium's repository deliberately created a real comment on GitHub Issue #2 and
   body.md
 ```
 
-The comment remains GitHub-local social state. Its local archive is provenance, not canonical issue prose. This is the first concrete demonstration of remote activity entering the sovereign filesystem without acquiring authority over canonical state.
+The comment remains GitHub-local social state. Its local archive is provenance, not canonical issue prose. This was the first concrete demonstration of remote activity entering the sovereign filesystem without acquiring authority over canonical state.
+
+The repository then deliberately created GitHub Issue #4 directly on GitHub with no canonical Allodium issue. The first observation was archived as:
+
+```text
+.project/remotes/github/incoming/2026/09/
+  github-issue-4-unmapped-2026-09-16T13-34-44Z/
+    event.toml
+    body.md
+```
+
+After that capture, the mapping table still contained only canonical issues 1 through 3 and `.project/issues/` still contained only `issue-0001` through `issue-0003`. This is the dogfood proof that observing a forge-native issue does not grant it canonical authority.
 
 ## Promotion
 
