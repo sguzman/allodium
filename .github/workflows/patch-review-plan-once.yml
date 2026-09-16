@@ -1,0 +1,462 @@
+name: One-time review planner implementation
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-review-plan-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+      - name: Add pure review projection planner
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('crates/allodium-core/src/github.rs')
+          text = path.read_text()
+
+          text = text.replace(
+              'use crate::{CanonicalIssue, load_issues, load_remote};',
+              'use crate::{CanonicalIssue, CanonicalReview, load_issues, load_remote, load_reviews};',
+              1,
+          )
+
+          text = text.replace(
+              'pub const OBSERVED_ISSUE_SCHEMA_V0: &str = "allodium.github.observed-issue/v0";\n',
+              'pub const OBSERVED_ISSUE_SCHEMA_V0: &str = "allodium.github.observed-issue/v0";\n'
+              'pub const REVIEW_MAPPINGS_SCHEMA_V0: &str = "allodium.github.review-mappings/v0";\n'
+              'pub const OBSERVED_REVIEW_SCHEMA_V0: &str = "allodium.github.observed-review/v0";\n',
+              1,
+          )
+
+          marker = '#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]\npub struct GitHubPlan {'
+          review_types = '''#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+          pub struct ReviewMapping {
+              pub number: u64,
+              pub url: String,
+          }
+
+          #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+          pub struct ReviewMappings {
+              pub schema: String,
+              #[serde(default)]
+              pub reviews: BTreeMap<String, ReviewMapping>,
+          }
+
+          #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+          pub struct ObservedReview {
+              pub schema: String,
+              pub canonical_id: String,
+              pub number: u64,
+              pub state: String,
+              pub title: String,
+              pub url: String,
+              pub base_ref: String,
+              pub head_ref: String,
+              pub base_sha: String,
+              pub head_sha: String,
+              pub remote_updated_at: String,
+              pub observed_at: String,
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit('GitHubPlan marker not found')
+          text = text.replace(marker, review_types + marker, 1)
+
+          marker = 'pub fn plan_to_toml(plan: &GitHubPlan) -> Result<String, String> {'
+          plan_reviews = '''pub fn plan_reviews(root: impl AsRef<Path>, remote_name: &str) -> Result<GitHubPlan, String> {
+              let root = root.as_ref();
+              let remote = load_remote(root, remote_name)?;
+              if remote.kind != "github" {
+                  return Err(format!(
+                      "remote {remote_name:?} has kind {:?}, not \\"github\\"",
+                      remote.kind
+                  ));
+              }
+
+              let mappings = load_review_mappings(root, remote_name)?;
+              let reviews = load_reviews(root)?;
+              let mut operations = Vec::new();
+
+              for review in reviews {
+                  plan_review(root, remote_name, &review, &mappings, &mut operations)?;
+              }
+
+              Ok(GitHubPlan {
+                  schema: PLAN_SCHEMA_V0.into(),
+                  remote: remote_name.into(),
+                  repository: remote.repository,
+                  operations,
+              })
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit('plan_to_toml marker not found')
+          text = text.replace(marker, plan_reviews + marker, 1)
+
+          marker = 'pub fn archive_issue_comment('
+          render_review = '''pub fn render_review_body(review: &CanonicalReview) -> String {
+              format!(
+                  "{}\\n\\n---\\n\\n**Allodium canonical review ID:** `{}`\\n\\nThis GitHub pull request is a projection of `.project/reviews/{}/`, not the canonical record.",
+                  review.body.trim(),
+                  review.record.id,
+                  review.record.id
+              )
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit('archive_issue_comment marker not found')
+          text = text.replace(marker, render_review + marker, 1)
+
+          marker = 'fn load_issue_mappings(root: &Path, remote_name: &str) -> Result<IssueMappings, String> {'
+          review_planning = '''fn plan_review(
+              root: &Path,
+              remote_name: &str,
+              review: &CanonicalReview,
+              mappings: &ReviewMappings,
+              operations: &mut Vec<GitHubOperation>,
+          ) -> Result<(), String> {
+              let canonical_id = &review.record.id;
+              let Some(mapping) = mappings.reviews.get(canonical_id) else {
+                  if review.record.state != "open" {
+                      return Err(format!(
+                          "canonical review {canonical_id:?} is {:?} but has no GitHub mapping; only open reviews can create a new pull-request projection",
+                          review.record.state
+                      ));
+                  }
+                  operations.push(GitHubOperation {
+                      canonical_id: canonical_id.clone(),
+                      action: "create_pull_request".into(),
+                      number: None,
+                      fields: vec![
+                          "title".into(),
+                          "body".into(),
+                          "base".into(),
+                          "head".into(),
+                          "state".into(),
+                      ],
+                      reason: "canonical review has no GitHub mapping".into(),
+                  });
+                  return Ok(());
+              };
+
+              let observed_path = observed_review_path(root, remote_name, canonical_id);
+              let observed_body_path = observed_review_body_path(root, remote_name, canonical_id);
+              if !observed_path.exists() || !observed_body_path.exists() {
+                  operations.push(GitHubOperation {
+                      canonical_id: canonical_id.clone(),
+                      action: "observe_pull_request".into(),
+                      number: Some(mapping.number),
+                      fields: vec![
+                          "title".into(),
+                          "body".into(),
+                          "state".into(),
+                          "base".into(),
+                          "head".into(),
+                      ],
+                      reason: "review mapping exists but the local observed pull-request snapshot is incomplete".into(),
+                  });
+                  return Ok(());
+              }
+
+              let observed = load_observed_review(&observed_path)?;
+              if observed.canonical_id != *canonical_id {
+                  return Err(format!(
+                      "{}: canonical_id {:?} does not match {:?}",
+                      observed_path.display(),
+                      observed.canonical_id,
+                      canonical_id
+                  ));
+              }
+              if observed.number != mapping.number {
+                  return Err(format!(
+                      "{}: GitHub pull request number {} disagrees with mapping {}",
+                      observed_path.display(),
+                      observed.number,
+                      mapping.number
+                  ));
+              }
+
+              if observed.state == "merged" && review.record.state != "merged" {
+                  return Err(format!(
+                      "canonical review {canonical_id:?} is {:?} but GitHub pull request {} is already merged; merge is terminal remote evidence",
+                      review.record.state,
+                      mapping.number
+                  ));
+              }
+              if review.record.state == "merged" && observed.state != "merged" {
+                  return Err(format!(
+                      "canonical review {canonical_id:?} requests merged state, but M2 v0 treats merge as observed remote evidence rather than an implicit merge command"
+                  ));
+              }
+              if observed.head_ref != review.record.head {
+                  return Err(format!(
+                      "canonical review {canonical_id:?} changed head from observed GitHub ref {:?} to {:?}; GitHub cannot retarget an existing pull request head",
+                      observed.head_ref,
+                      review.record.head
+                  ));
+              }
+
+              let observed_body = fs::read_to_string(&observed_body_path)
+                  .map_err(|error| format!("{}: {error}", observed_body_path.display()))?;
+              let desired_body = render_review_body(review);
+              let mut fields = Vec::new();
+
+              if observed.title != review.record.title {
+                  fields.push("title".into());
+              }
+              if observed_body.trim_end() != desired_body.trim_end() {
+                  fields.push("body".into());
+              }
+              if observed.base_ref != review.record.base {
+                  fields.push("base".into());
+              }
+              if observed.state != review.record.state {
+                  fields.push("state".into());
+              }
+
+              if !fields.is_empty() {
+                  operations.push(GitHubOperation {
+                      canonical_id: canonical_id.clone(),
+                      action: "update_pull_request".into(),
+                      number: Some(mapping.number),
+                      fields,
+                      reason: "canonical review managed fields differ from the last observed GitHub pull-request state".into(),
+                  });
+              }
+
+              Ok(())
+          }
+
+          fn load_review_mappings(root: &Path, remote_name: &str) -> Result<ReviewMappings, String> {
+              let path = root
+                  .join(".project/remotes")
+                  .join(remote_name)
+                  .join("mappings/reviews.toml");
+              if !path.exists() {
+                  return Ok(ReviewMappings {
+                      schema: REVIEW_MAPPINGS_SCHEMA_V0.into(),
+                      reviews: BTreeMap::new(),
+                  });
+              }
+
+              let text = fs::read_to_string(&path)
+                  .map_err(|error| format!("{}: {error}", path.display()))?;
+              let mappings: ReviewMappings = toml::from_str(&text)
+                  .map_err(|error| format!("{}: {error}", path.display()))?;
+              if mappings.schema != REVIEW_MAPPINGS_SCHEMA_V0 {
+                  return Err(format!(
+                      "{}: unsupported schema {:?}; expected {:?}",
+                      path.display(),
+                      mappings.schema,
+                      REVIEW_MAPPINGS_SCHEMA_V0
+                  ));
+              }
+              Ok(mappings)
+          }
+
+          fn load_observed_review(path: &Path) -> Result<ObservedReview, String> {
+              let text = fs::read_to_string(path)
+                  .map_err(|error| format!("{}: {error}", path.display()))?;
+              let observed: ObservedReview = toml::from_str(&text)
+                  .map_err(|error| format!("{}: {error}", path.display()))?;
+              if observed.schema != OBSERVED_REVIEW_SCHEMA_V0 {
+                  return Err(format!(
+                      "{}: unsupported schema {:?}; expected {:?}",
+                      path.display(),
+                      observed.schema,
+                      OBSERVED_REVIEW_SCHEMA_V0
+                  ));
+              }
+              Ok(observed)
+          }
+
+          fn observed_review_path(root: &Path, remote_name: &str, canonical_id: &str) -> PathBuf {
+              root.join(".project/remotes")
+                  .join(remote_name)
+                  .join("observed/reviews")
+                  .join(format!("{canonical_id}.toml"))
+          }
+
+          fn observed_review_body_path(root: &Path, remote_name: &str, canonical_id: &str) -> PathBuf {
+              root.join(".project/remotes")
+                  .join(remote_name)
+                  .join("observed/reviews")
+                  .join(format!("{canonical_id}.body.md"))
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit('load_issue_mappings marker not found')
+          text = text.replace(marker, review_planning + marker, 1)
+
+          marker = '    fn test_project(name: &str) -> PathBuf {'
+          review_tests = '''    #[test]
+              fn unmapped_open_review_plans_pull_request_creation() {
+                  let root = test_project("review-create");
+                  write_review(&root, "open", "main", "feature");
+
+                  let plan = plan_reviews(&root, "github").unwrap();
+                  assert_eq!(plan.operations.len(), 1);
+                  assert_eq!(plan.operations[0].action, "create_pull_request");
+                  assert_eq!(plan.operations[0].canonical_id, "review-0001");
+
+                  fs::remove_dir_all(root).unwrap();
+              }
+
+              #[test]
+              fn mapped_but_unobserved_review_plans_observation() {
+                  let root = test_project("review-observe");
+                  write_review(&root, "open", "main", "feature");
+                  write_review_mapping(&root);
+
+                  let plan = plan_reviews(&root, "github").unwrap();
+                  assert_eq!(plan.operations.len(), 1);
+                  assert_eq!(plan.operations[0].action, "observe_pull_request");
+                  assert_eq!(plan.operations[0].number, Some(23));
+
+                  fs::remove_dir_all(root).unwrap();
+              }
+
+              #[test]
+              fn matching_review_observation_is_idempotent() {
+                  let root = test_project("review-idempotent");
+                  write_review(&root, "open", "main", "feature");
+                  write_review_mapping(&root);
+                  write_matching_review_observation(&root, "open", "main", "feature");
+
+                  let plan = plan_reviews(&root, "github").unwrap();
+                  assert!(plan.operations.is_empty(), "{:?}", plan.operations);
+
+                  fs::remove_dir_all(root).unwrap();
+              }
+
+              #[test]
+              fn changed_review_managed_fields_plan_update() {
+                  let root = test_project("review-update");
+                  write_review(&root, "closed", "develop", "feature");
+                  write_review_mapping(&root);
+                  write_matching_review_observation(&root, "open", "main", "feature");
+
+                  let review_path = root.join(".project/reviews/review-0001/review.toml");
+                  let text = fs::read_to_string(&review_path).unwrap().replace(
+                      "title = \\"Test review\\"",
+                      "title = \\"Changed review\\"",
+                  );
+                  fs::write(review_path, text).unwrap();
+
+                  let plan = plan_reviews(&root, "github").unwrap();
+                  assert_eq!(plan.operations.len(), 1);
+                  assert_eq!(plan.operations[0].action, "update_pull_request");
+                  assert_eq!(
+                      plan.operations[0].fields,
+                      vec!["title", "base", "state"]
+                  );
+
+                  fs::remove_dir_all(root).unwrap();
+              }
+
+              #[test]
+              fn changing_review_head_is_rejected() {
+                  let root = test_project("review-head-change");
+                  write_review(&root, "open", "main", "replacement");
+                  write_review_mapping(&root);
+                  write_matching_review_observation(&root, "open", "main", "feature");
+
+                  let error = plan_reviews(&root, "github").unwrap_err();
+                  assert!(error.contains("cannot retarget an existing pull request head"));
+
+                  fs::remove_dir_all(root).unwrap();
+              }
+
+              #[test]
+              fn canonical_merge_is_not_an_implicit_github_merge_command() {
+                  let root = test_project("review-merge");
+                  write_review(&root, "merged", "main", "feature");
+                  write_review_mapping(&root);
+                  write_matching_review_observation(&root, "open", "main", "feature");
+
+                  let error = plan_reviews(&root, "github").unwrap_err();
+                  assert!(error.contains("merge as observed remote evidence"));
+
+                  fs::remove_dir_all(root).unwrap();
+              }
+
+          '''
+          if marker not in text:
+              raise SystemExit('test_project marker not found')
+          text = text.replace(marker, review_tests + marker, 1)
+
+          marker = '    fn write_mapping(root: &Path) {'
+          review_helpers = '''    fn write_review(root: &Path, state: &str, base: &str, head: &str) {
+              fs::create_dir_all(root.join(".project/reviews/review-0001")).unwrap();
+              fs::create_dir_all(root.join(".project/remotes/github/observed/reviews")).unwrap();
+              fs::write(
+                  root.join(".project/reviews/review-0001/review.toml"),
+                  format!(
+                      "schema = \\"allodium.review/v0\\"\\nid = \\"review-0001\\"\\ntitle = \\"Test review\\"\\nstate = \\"{state}\\"\\nbase = \\"{base}\\"\\nhead = \\"{head}\\"\\n"
+                  ),
+              )
+              .unwrap();
+              fs::write(
+                  root.join(".project/reviews/review-0001/body.md"),
+                  "Review body\\n",
+              )
+              .unwrap();
+          }
+
+              fn write_review_mapping(root: &Path) {
+                  fs::write(
+                      root.join(".project/remotes/github/mappings/reviews.toml"),
+                      "schema = \\"allodium.github.review-mappings/v0\\"\\n\\n[reviews.review-0001]\\nnumber = 23\\nurl = \\"https://github.com/owner/repo/pull/23\\"\\n",
+                  )
+                  .unwrap();
+              }
+
+              fn write_matching_review_observation(root: &Path, state: &str, base: &str, head: &str) {
+                  fs::write(
+                      root.join(".project/remotes/github/observed/reviews/review-0001.toml"),
+                      format!(
+                          "schema = \\"allodium.github.observed-review/v0\\"\\ncanonical_id = \\"review-0001\\"\\nnumber = 23\\nstate = \\"{state}\\"\\ntitle = \\"Test review\\"\\nurl = \\"https://github.com/owner/repo/pull/23\\"\\nbase_ref = \\"{base}\\"\\nhead_ref = \\"{head}\\"\\nbase_sha = \\"base-sha\\"\\nhead_sha = \\"head-sha\\"\\nremote_updated_at = \\"2026-09-16T12:00:00Z\\"\\nobserved_at = \\"2026-09-16T12:01:00Z\\"\\n"
+                      ),
+                  )
+                  .unwrap();
+                  let reviews = crate::load_reviews(root).unwrap();
+                  fs::write(
+                      root.join(".project/remotes/github/observed/reviews/review-0001.body.md"),
+                      render_review_body(&reviews[0]),
+                  )
+                  .unwrap();
+              }
+
+          '''
+          if marker not in text:
+              raise SystemExit('write_mapping marker not found')
+          text = text.replace(marker, review_helpers + marker, 1)
+
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          cargo test --workspace --locked
+      - name: Commit tested planner
+        shell: bash
+        run: |
+          git config user.name 'Allodium automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add crates/allodium-core/src/github.rs
+          git commit -m 'feat: add pure GitHub review projection planner'
+          git push
