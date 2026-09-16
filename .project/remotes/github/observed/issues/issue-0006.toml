@@ -1,0 +1,7 @@
+schema = "allodium.github.observed-issue/v0"
+canonical_id = "issue-0006"
+number = 8
+state = "open"
+title = "Implement GitHub wiki projection vertical slice"
+url = "https://github.com/sguzman/allodium/issues/8"
+observed_at = "2026-09-16T18:00:08Z"
