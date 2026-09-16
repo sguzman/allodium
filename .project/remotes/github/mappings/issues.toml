@@ -1,0 +1,9 @@
+schema = "allodium.github.issue-mappings/v0"
+
+[issues.issue-0001]
+number = 1
+url = "https://github.com/sguzman/allodium/issues/1"
+
+[issues.issue-0002]
+number = 2
+url = "https://github.com/sguzman/allodium/issues/2"
