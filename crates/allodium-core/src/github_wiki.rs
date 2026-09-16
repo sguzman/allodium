@@ -136,6 +136,22 @@ pub fn plan_wiki(root: impl AsRef<Path>, remote_name: &str) -> Result<GitHubPlan
             fields: vec!["revision".into(), "files".into()],
             reason: "canonical wiki exists but no local GitHub Wiki observation is recorded".into(),
         }),
+        Some((observation, observed_files)) if observation.head_sha.is_none() => {
+            if !observed_files.is_empty() {
+                return Err(
+                    "observed GitHub Wiki has no HEAD revision but contains files; refuse inconsistent uninitialized-provider snapshot"
+                        .into(),
+                );
+            }
+            operations.push(GitHubOperation {
+                canonical_id: "wiki".into(),
+                action: "wiki_bootstrap_required".into(),
+                number: None,
+                fields: vec!["files".into()],
+                reason: "GitHub Wiki is enabled but its separate wiki repository is not initialized; provider bootstrap is required before canonical pages can be projected"
+                    .into(),
+            });
+        }
         Some((_observation, observed_files)) if observed_files != desired => {
             operations.push(GitHubOperation {
                 canonical_id: "wiki".into(),
@@ -359,6 +375,25 @@ mod tests {
         let plan = plan_wiki(&root, "github").unwrap();
         assert_eq!(plan.operations.len(), 1);
         assert_eq!(plan.operations[0].action, "observe_wiki");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uninitialized_provider_plans_non_mutating_bootstrap_requirement() {
+        let root = test_project("bootstrap", "Home.md");
+        fs::write(root.join(".project/wiki/Home.md"), "# Home\n").unwrap();
+        let observation = ObservedWiki {
+            schema: OBSERVED_WIKI_SCHEMA_V0.into(),
+            branch: "master".into(),
+            head_sha: None,
+            observed_at: "2026-09-16T18:00:00Z".into(),
+        };
+        write_observed_wiki_snapshot(&root, "github", &observation, &WikiFileSet::new()).unwrap();
+
+        let plan = plan_wiki(&root, "github").unwrap();
+        assert_eq!(plan.operations.len(), 1);
+        assert_eq!(plan.operations[0].action, "wiki_bootstrap_required");
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -98,6 +98,14 @@ fn github_plan(root: PathBuf, remote_name: &str) -> ExitCode {
             return Err("GitHub wiki projection plan disagrees about the configured remote".into());
         }
         plan.operations.extend(wiki_plan.operations);
+
+        let release_plan = allodium_core::github_release::plan_releases(&root, remote_name)?;
+        if plan.remote != release_plan.remote || plan.repository != release_plan.repository {
+            return Err(
+                "GitHub Release projection plan disagrees about the configured remote".into(),
+            );
+        }
+        plan.operations.extend(release_plan.operations);
         Ok(plan)
     });
 
@@ -184,6 +192,10 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
             println!("observed {} GitHub review(s)", report.reviews_observed);
             println!("observed {} GitHub wiki(s)", report.wikis_observed);
             println!("updated {} GitHub wiki(s)", report.wikis_updated);
+            println!(
+                "{} GitHub wiki projection(s) require provider bootstrap",
+                report.wiki_bootstrap_required
+            );
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),

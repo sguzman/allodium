@@ -64,6 +64,7 @@ pub struct ApplyReport {
     pub reviews_observed: usize,
     pub wikis_observed: usize,
     pub wikis_updated: usize,
+    pub wiki_bootstrap_required: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -514,6 +515,9 @@ impl GitHubAdapter {
                 "observe_wiki" => {
                     let wiki_report = wiki::observe_wiki(self, root, &plan.remote)?;
                     report.wikis_observed += wiki_report.observed;
+                }
+                "wiki_bootstrap_required" => {
+                    report.wiki_bootstrap_required += 1;
                 }
                 "update_wiki" => {
                     wiki::apply_wiki_update(self, root, &plan.remote)?;

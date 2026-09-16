@@ -1,6 +1,6 @@
 use crate::github::{GitHubOperation, GitHubPlan, PLAN_SCHEMA_V0};
-use crate::release::{CanonicalRelease, load_releases};
 use crate::load_remote;
+use crate::release::{CanonicalRelease, load_releases};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -126,8 +126,8 @@ pub fn load_observed_release(
     }
     let text = fs::read_to_string(&metadata_path)
         .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
-    let observed: ObservedRelease = toml::from_str(&text)
-        .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
+    let observed: ObservedRelease =
+        toml::from_str(&text).map_err(|error| format!("{}: {error}", metadata_path.display()))?;
     if observed.schema != OBSERVED_RELEASE_SCHEMA_V0 {
         return Err(format!(
             "{}: unsupported observed release schema {:?}; expected {:?}",
@@ -154,9 +154,14 @@ pub fn write_observed_release_snapshot(
         ));
     }
     let metadata_path = observed_release_path(root.as_ref(), remote_name, &observed.canonical_id);
-    let notes_path = observed_release_notes_path(root.as_ref(), remote_name, &observed.canonical_id);
-    fs::create_dir_all(metadata_path.parent().expect("observed release path has parent"))
-        .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
+    let notes_path =
+        observed_release_notes_path(root.as_ref(), remote_name, &observed.canonical_id);
+    fs::create_dir_all(
+        metadata_path
+            .parent()
+            .expect("observed release path has parent"),
+    )
+    .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
     let text = toml::to_string_pretty(observed)
         .map_err(|error| format!("could not serialize observed GitHub Release: {error}"))?;
     fs::write(&metadata_path, text)
@@ -224,13 +229,22 @@ fn plan_release(
         ));
     }
 
-    let Some((observed, observed_notes)) = load_observed_release(root, remote_name, canonical_id)? else {
+    let Some((observed, observed_notes)) = load_observed_release(root, remote_name, canonical_id)?
+    else {
         operations.push(GitHubOperation {
             canonical_id: canonical_id.clone(),
             action: "observe_release".into(),
             number: Some(mapping.id),
-            fields: vec!["title".into(), "notes".into(), "state".into(), "tag".into(), "revision".into()],
-            reason: "release mapping exists but the local observed GitHub Release snapshot is missing".into(),
+            fields: vec![
+                "title".into(),
+                "notes".into(),
+                "state".into(),
+                "tag".into(),
+                "revision".into(),
+            ],
+            reason:
+                "release mapping exists but the local observed GitHub Release snapshot is missing"
+                    .into(),
         });
         return Ok(());
     };
@@ -450,7 +464,9 @@ mod tests {
             "schema = \"allodium.remote/v0\"\nname = \"github\"\nkind = \"github\"\nrepository = \"owner/repo\"\noutbound = \"reconcile\"\ninbound = \"archive\"\n",
         )
         .unwrap();
-        let tag_line = tag.map(|tag| format!("tag = \"{tag}\"\n")).unwrap_or_default();
+        let tag_line = tag
+            .map(|tag| format!("tag = \"{tag}\"\n"))
+            .unwrap_or_default();
         fs::write(
             root.join(".project/releases/release-0001/release.toml"),
             format!(
