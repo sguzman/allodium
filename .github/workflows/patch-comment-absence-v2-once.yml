@@ -1,0 +1,85 @@
+name: One-time comment absence patch v2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-comment-absence-v2-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+      - name: Apply robust comment disappearance patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          template = Path('.github/workflows/patch-comment-absence-once.yml').read_text()
+          begin_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          begin = template.index(begin_marker) + len(begin_marker)
+          end = template.index(end_marker, begin)
+          script = textwrap.dedent(template[begin:end])
+
+          start = script.index("old_loop = '''")
+          finish_marker = "replace_once(old_loop, new_loop, 'mapped comment observation loop')\n"
+          finish = script.index(finish_marker, start) + len(finish_marker)
+          structural = """loop_start = text.find('            for comment in self.fetch_issue_comments(mapping.number)? {')
+          if loop_start < 0:
+              raise SystemExit('mapped comment loop start not found')
+          loop_end_marker = '\\n        }\\n\\n        for issue in self.fetch_repository_issues()?'
+          loop_end = text.find(loop_end_marker, loop_start)
+          if loop_end < 0:
+              raise SystemExit('mapped comment loop end not found')
+          new_loop = '''            let comments = self.fetch_issue_comments(mapping.number)?;
+              let current_comment_ids = comments
+                  .iter()
+                  .map(|comment| comment.id)
+                  .collect::<BTreeSet<_>>();
+              for comment in comments {
+                  match archive_comment_observation(
+                      root,
+                      remote_name,
+                      &canonical_id,
+                      mapping.number,
+                      &comment,
+                      &now(),
+                  )? {
+                      CommentArchive::Created => report.comments_archived += 1,
+                      CommentArchive::Edited => report.comment_edits_archived += 1,
+                      CommentArchive::Unchanged => {}
+                  }
+              }
+              report.comment_disappearances_archived += archive_missing_comment_observations(
+                  root,
+                  remote_name,
+                  &canonical_id,
+                  mapping.number,
+                  &current_comment_ids,
+                  &now(),
+              )?;'''
+          text = text[:loop_start] + new_loop + text[loop_end:]
+          """
+          script = script[:start] + structural + script[finish:]
+          exec(compile(script, 'comment-absence-patch', 'exec'))
+          PY
+          cargo fmt --all
+          cargo test --workspace --locked
+      - name: Commit tested patch
+        shell: bash
+        run: |
+          git config user.name 'Allodium automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add crates/allodium-github/src/lib.rs crates/allodium-cli/src/main.rs
+          git commit -m 'feat: archive comments no longer observed on GitHub'
+          git push
