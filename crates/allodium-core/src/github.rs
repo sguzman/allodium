@@ -210,8 +210,7 @@ pub fn archive_issue_comment(
         ));
     }
 
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("{}: {error}", directory.display()))?;
+    fs::create_dir_all(&directory).map_err(|error| format!("{}: {error}", directory.display()))?;
     fs::write(&event_path, event_text)
         .map_err(|error| format!("{}: {error}", event_path.display()))?;
     fs::write(&body_path, &comment.body)
