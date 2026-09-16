@@ -1,4 +1,5 @@
 pub mod github;
+pub mod wiki;
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -159,6 +160,7 @@ pub fn validate(root: impl AsRef<Path>) -> ValidationReport {
         Err(error) => report.errors.push(error),
     }
 
+    wiki::validate_wiki(root, &mut report);
     validate_remotes(root, &mut report);
     report
 }
