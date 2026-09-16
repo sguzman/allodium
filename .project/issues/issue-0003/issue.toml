@@ -1,5 +1,5 @@
 schema = "allodium.issue/v0"
 id = "issue-0003"
 title = "Harden M1 reconciliation and ingress edge cases"
-state = "open"
+state = "closed"
 labels = ["m1", "github"]
