@@ -1,0 +1,297 @@
+name: One-time unmapped issue ingress patch
+
+on:
+  push:
+    paths:
+      - '.github/workflows/patch-unmapped-ingress-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+      - name: Implement unmapped GitHub issue ingress
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'{label}: patch anchor not found')
+              return text.replace(old, new, 1)
+
+          path = Path('crates/allodium-github/src/lib.rs')
+          text = path.read_text()
+          text = replace_once(
+              text,
+              'use std::collections::BTreeMap;',
+              'use std::collections::{BTreeMap, BTreeSet};',
+              'collections import',
+          )
+          text = replace_once(
+              text,
+              'const MANAGED_CHANGE_SCHEMA_V0: &str = "allodium.github.managed-change-observation/v0";\n',
+              'const MANAGED_CHANGE_SCHEMA_V0: &str = "allodium.github.managed-change-observation/v0";\nconst UNMAPPED_ISSUE_SCHEMA_V0: &str = "allodium.github.unmapped-issue-observation/v0";\n',
+              'unmapped schema constant',
+          )
+          text = replace_once(
+              text,
+              '    pub managed_changes_archived: usize,\n}',
+              '    pub managed_changes_archived: usize,\n    pub unmapped_issues_archived: usize,\n}',
+              'observe report',
+          )
+          marker = '''#[derive(Debug, Clone, Deserialize)]\nstruct ApiIssue {'''
+          addition = '''#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+          struct UnmappedIssueObservation {
+              schema: String,
+              id: String,
+              remote: String,
+              kind: String,
+              observed_at: String,
+              evidence: String,
+              title: String,
+              state: String,
+              actor: IncomingActor,
+              source: IncomingSource,
+          }
+
+          #[derive(Debug, Clone, Deserialize)]
+          struct ApiRepositoryIssue {
+              number: u64,
+              html_url: String,
+              title: String,
+              body: Option<String>,
+              state: String,
+              user: ApiUser,
+              created_at: String,
+              updated_at: String,
+              #[serde(default)]
+              pull_request: Option<serde_json::Value>,
+          }
+
+          '''
+          text = replace_once(text, marker, addition + marker, 'repository issue structs')
+
+          old = '''        let mappings = load_mappings(root, remote_name)?;
+              let mut report = ObserveReport::default();
+
+              for (canonical_id, mapping) in mappings.issues {'''
+          new = '''        let mappings = load_mappings(root, remote_name)?;
+              let mapped_numbers = mappings
+                  .issues
+                  .values()
+                  .map(|mapping| mapping.number)
+                  .collect::<BTreeSet<_>>();
+              let mut report = ObserveReport::default();
+
+              for (canonical_id, mapping) in mappings.issues {'''
+          text = replace_once(text, old, new, 'mapped number collection')
+
+          old = '''            }
+              }
+
+              Ok(report)
+          }
+
+          pub fn apply'''
+          new = '''            }
+              }
+
+              for issue in self.fetch_repository_issues()? {
+                  if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
+                      continue;
+                  }
+                  if archive_unmapped_issue_observation(root, remote_name, &issue, &now())? {
+                      report.unmapped_issues_archived += 1;
+                  }
+              }
+
+              Ok(report)
+          }
+
+          pub fn apply'''
+          text = replace_once(text, old, new, 'unmapped discovery loop')
+
+          marker = '''    fn create_issue(&self, issue: &CanonicalIssue) -> Result<ApiIssue, String> {'''
+          method = '''    fn fetch_repository_issues(&self) -> Result<Vec<ApiRepositoryIssue>, String> {
+              let mut page = 1;
+              let mut issues = Vec::new();
+              loop {
+                  let batch: Vec<ApiRepositoryIssue> = self.get(&format!(
+                      "/repos/{}/issues?state=all&per_page=100&page={page}",
+                      self.repository
+                  ))?;
+                  let count = batch.len();
+                  issues.extend(batch);
+                  if count < 100 {
+                      break;
+                  }
+                  page += 1;
+              }
+              Ok(issues)
+          }
+
+          '''
+          text = replace_once(text, marker, method + marker, 'repository issue fetch')
+
+          marker = '''fn archive_managed_change_if_needed('''
+          function = '''fn archive_unmapped_issue_observation(
+              root: &Path,
+              remote_name: &str,
+              issue: &ApiRepositoryIssue,
+              observed_at: &str,
+          ) -> Result<bool, String> {
+              let event_id = format!(
+                  "{remote_name}-issue-{}-unmapped-{}",
+                  issue.number,
+                  timestamp_slug(&issue.updated_at)
+              );
+              // Use the provider revision timestamp for the directory bucket so repeatedly
+              // observing the same remote revision remains idempotent across local poll dates.
+              let directory = incoming_directory(root, remote_name, &issue.updated_at, &event_id)?;
+              let event = UnmappedIssueObservation {
+                  schema: UNMAPPED_ISSUE_SCHEMA_V0.into(),
+                  id: event_id,
+                  remote: remote_name.into(),
+                  kind: "issue.unmapped.observed".into(),
+                  observed_at: observed_at.into(),
+                  evidence: "GitHub REST issue observation has no canonical Allodium mapping; archived as provider-scoped evidence only. No canonical issue or mapping was created.".into(),
+                  title: issue.title.clone(),
+                  state: issue.state.clone(),
+                  actor: IncomingActor {
+                      remote_id: issue.user.id.to_string(),
+                      login: issue.user.login.clone(),
+                  },
+                  source: IncomingSource {
+                      remote_object_type: "issue".into(),
+                      remote_object_id: issue.number.to_string(),
+                      url: issue.html_url.clone(),
+                      created_at: Some(issue.created_at.clone()),
+                      updated_at: Some(issue.updated_at.clone()),
+                  },
+              };
+              let event_path = directory.join("event.toml");
+              let body_path = directory.join("body.md");
+              let event_text = toml::to_string_pretty(&event)
+                  .map_err(|error| format!("could not serialize unmapped GitHub issue: {error}"))?;
+              let body = issue.body.as_deref().unwrap_or_default();
+
+              if directory.exists() {
+                  let existing_event_text = fs::read_to_string(&event_path)
+                      .map_err(|error| format!("{}: {error}", event_path.display()))?;
+                  let existing_event: UnmappedIssueObservation = toml::from_str(&existing_event_text)
+                      .map_err(|error| format!("{}: {error}", event_path.display()))?;
+                  let existing_body = fs::read_to_string(&body_path)
+                      .map_err(|error| format!("{}: {error}", body_path.display()))?;
+                  let same_revision = existing_event.schema == event.schema
+                      && existing_event.id == event.id
+                      && existing_event.remote == event.remote
+                      && existing_event.kind == event.kind
+                      && existing_event.title == event.title
+                      && existing_event.state == event.state
+                      && existing_event.actor == event.actor
+                      && existing_event.source == event.source;
+                  if same_revision && existing_body == body {
+                      return Ok(false);
+                  }
+                  return Err(format!(
+                      "unmapped GitHub issue observation collision at {}; provider revision identity points to different evidence",
+                      directory.display()
+                  ));
+              }
+
+              fs::create_dir_all(&directory)
+                  .map_err(|error| format!("{}: {error}", directory.display()))?;
+              fs::write(&event_path, event_text)
+                  .map_err(|error| format!("{}: {error}", event_path.display()))?;
+              fs::write(&body_path, body)
+                  .map_err(|error| format!("{}: {error}", body_path.display()))?;
+              Ok(true)
+          }
+
+          '''
+          text = replace_once(text, marker, function + marker, 'unmapped archive function')
+
+          marker = '''    fn test_root(name: &str) -> PathBuf {'''
+          test = '''    #[test]
+              fn unmapped_issue_revision_is_provider_scoped_and_idempotent() {
+                  let root = test_root("unmapped");
+                  let issue = ApiRepositoryIssue {
+                      number: 44,
+                      html_url: "https://github.com/owner/repo/issues/44".into(),
+                      title: "External issue".into(),
+                      body: Some("Remote-only body".into()),
+                      state: "open".into(),
+                      user: ApiUser {
+                          id: 9,
+                          login: "outside-user".into(),
+                      },
+                      created_at: "2026-09-16T10:00:00Z".into(),
+                      updated_at: "2026-09-16T10:05:00Z".into(),
+                      pull_request: None,
+                  };
+
+                  assert!(archive_unmapped_issue_observation(
+                      &root,
+                      "github",
+                      &issue,
+                      "2026-09-16T11:00:00Z",
+                  )
+                  .unwrap());
+                  assert!(!archive_unmapped_issue_observation(
+                      &root,
+                      "github",
+                      &issue,
+                      "2026-09-17T11:00:00Z",
+                  )
+                  .unwrap());
+                  assert!(!root.join(".project/issues").exists());
+                  let event = root.join(
+                      ".project/remotes/github/incoming/2026/09/github-issue-44-unmapped-2026-09-16T10-05-00Z/event.toml",
+                  );
+                  let text = fs::read_to_string(event).unwrap();
+                  assert!(text.contains("kind = \\"issue.unmapped.observed\\""));
+                  assert!(text.contains("remote_object_id = \\"44\\""));
+
+                  fs::remove_dir_all(root).unwrap();
+              }
+
+          '''
+          text = replace_once(text, marker, test + marker, 'unmapped ingress test')
+          path.write_text(text)
+
+          cli = Path('crates/allodium-cli/src/main.rs')
+          text = cli.read_text()
+          old = '''            println!(
+                          "archived {} managed-field remote change(s)",
+                          report.managed_changes_archived
+                      );'''
+          new = '''            println!(
+                          "archived {} managed-field remote change(s)",
+                          report.managed_changes_archived
+                      );
+                      println!(
+                          "archived {} unmapped GitHub issue revision(s)",
+                          report.unmapped_issues_archived
+                      );'''
+          text = replace_once(text, old, new, 'CLI observe report')
+          cli.write_text(text)
+          PY
+          cargo fmt --all
+          cargo test --workspace --locked
+      - name: Commit tested patch
+        shell: bash
+        run: |
+          git config user.name 'Allodium automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add crates/allodium-github/src/lib.rs crates/allodium-cli/src/main.rs
+          git commit -m 'feat: archive unmapped GitHub issue revisions'
+          git push
