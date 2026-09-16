@@ -1,0 +1,24 @@
+schema = "allodium.github.review-social-event/v0"
+id = "github-pull-request-7-conversation-comment-5700802090-snapshot-0806e09a4f25d291"
+remote = "github"
+kind = "review.conversation_comment.observed_snapshot"
+observed_at = "2026-09-16T16:37:52Z"
+evidence = "GitHub REST pull-request conversation comment observation"
+
+[target]
+canonical_id = "review-0001"
+remote_type = "pull_request"
+remote_id = "7"
+
+[actor]
+remote_id = "6679733"
+login = "sguzman"
+
+[source]
+remote_object_type = "pull_request_conversation_comment"
+remote_object_id = "5700802090"
+url = "https://github.com/sguzman/allodium/pull/7#issuecomment-5700802090"
+created_at = "2026-09-16T16:19:57Z"
+updated_at = "2026-09-16T16:19:57Z"
+
+[context]

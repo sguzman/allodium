@@ -1,0 +1,1 @@
+Dogfood conversation comment: this text originates on GitHub and must be archived as provider-scoped review evidence. It must never silently become canonical `.project/reviews/review-0001/body.md` content.

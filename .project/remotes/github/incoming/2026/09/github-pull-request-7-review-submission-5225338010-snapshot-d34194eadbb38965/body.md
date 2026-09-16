@@ -1,0 +1,1 @@
+Dogfood submitted review: this review submission is GitHub-scoped social evidence and should be archived with provider identity and revision provenance, never promoted automatically into canonical review state.

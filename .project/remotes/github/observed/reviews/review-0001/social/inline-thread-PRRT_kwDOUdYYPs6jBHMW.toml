@@ -1,0 +1,9 @@
+schema = "allodium.github.observed-review-social/v0"
+canonical_id = "review-0001"
+pull_request_number = 7
+kind_key = "inline-thread"
+remote_object_id = "PRRT_kwDOUdYYPs6jBHMW"
+fingerprint = "f674296a277da247"
+url = "https://github.com/sguzman/allodium/pull/7"
+present = true
+observed_at = "2026-09-16T16:37:52Z"

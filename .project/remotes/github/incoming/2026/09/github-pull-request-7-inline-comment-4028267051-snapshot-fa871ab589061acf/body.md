@@ -1,0 +1,1 @@
+Dogfood inline thread: preserve this path/line/side and commit context as provider-scoped evidence. Canonical review prose must remain unchanged.

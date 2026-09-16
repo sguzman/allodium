@@ -1,0 +1,13 @@
+schema = "allodium.github.observed-review-social/v0"
+canonical_id = "review-0001"
+pull_request_number = 7
+kind_key = "inline-comment"
+remote_object_id = "4028267051"
+fingerprint = "fa871ab589061acf"
+url = "https://github.com/sguzman/allodium/pull/7#discussion_r4028267051"
+present = true
+observed_at = "2026-09-16T16:37:52Z"
+
+[actor]
+remote_id = "6679733"
+login = "sguzman"
