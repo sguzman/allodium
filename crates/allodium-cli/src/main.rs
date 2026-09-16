@@ -126,9 +126,14 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
             println!("observed {} GitHub issue(s)", report.issues_observed);
             println!("observed {} GitHub review(s)", report.reviews_observed);
             println!("observed {} GitHub wiki(s)", report.wikis_observed);
+            println!("observed {} GitHub release(s)", report.releases_observed);
             println!(
                 "archived {} GitHub Wiki remote-tree change(s)",
                 report.wiki_remote_changes_archived
+            );
+            println!(
+                "archived {} GitHub Release managed-field remote change(s)",
+                report.release_managed_changes_archived
             );
             println!(
                 "archived {} PR conversation-comment snapshot(s)",
@@ -196,6 +201,9 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
                 "{} GitHub wiki projection(s) require provider bootstrap",
                 report.wiki_bootstrap_required
             );
+            println!("created {} GitHub release(s)", report.releases_created);
+            println!("updated {} GitHub release(s)", report.releases_updated);
+            println!("observed {} GitHub release(s)", report.releases_observed);
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),

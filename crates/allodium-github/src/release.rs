@@ -1,10 +1,8 @@
-use super::{
-    GitHubAdapter, github_api_error, incoming_directory, now, timestamp_slug, write_toml,
-};
+use super::{GitHubAdapter, github_api_error, incoming_directory, now, timestamp_slug, write_toml};
 use allodium_core::github_release::{
     OBSERVED_RELEASE_SCHEMA_V0, ObservedRelease, ReleaseMapping, ReleaseMappings,
-    load_observed_release, load_release_mappings, require_full_commit_sha, require_github_release_tag,
-    save_release_mappings, write_observed_release_snapshot,
+    load_observed_release, load_release_mappings, require_full_commit_sha,
+    require_github_release_tag, save_release_mappings, write_observed_release_snapshot,
 };
 use allodium_core::release::CanonicalRelease;
 use serde::{Deserialize, Serialize};
@@ -87,12 +85,8 @@ pub(super) fn observe_releases(
             ));
         }
         let (snapshot, notes) = snapshot_from_api(adapter, &canonical_id, &live, &observed_at)?;
-        report.managed_changes_archived += archive_managed_change_if_needed(
-            root,
-            remote_name,
-            &snapshot,
-            &notes,
-        )?;
+        report.managed_changes_archived +=
+            archive_managed_change_if_needed(root, remote_name, &snapshot, &notes)?;
         write_observed_release_snapshot(root, remote_name, &snapshot, &notes)?;
         report.observed += 1;
     }
@@ -165,7 +159,9 @@ pub(super) fn apply_observe_release(
 ) -> Result<(), String> {
     let mappings = load_release_mappings(root, remote_name)?;
     let mapping = mappings.releases.get(canonical_id).ok_or_else(|| {
-        format!("cannot observe GitHub Release {release_id}: no mapping exists for {canonical_id:?}")
+        format!(
+            "cannot observe GitHub Release {release_id}: no mapping exists for {canonical_id:?}"
+        )
     })?;
     if mapping.id != release_id {
         return Err(format!(
@@ -232,10 +228,8 @@ fn verify_canonical_revision(
     release: &CanonicalRelease,
 ) -> Result<(), String> {
     let revision = require_full_commit_sha(release)?;
-    let commit: ApiCommit = adapter.get(&format!(
-        "/repos/{}/commits/{revision}",
-        adapter.repository
-    ))?;
+    let commit: ApiCommit =
+        adapter.get(&format!("/repos/{}/commits/{revision}", adapter.repository))?;
     if !commit.sha.eq_ignore_ascii_case(revision) {
         return Err(format!(
             "canonical release {:?} revision {:?} resolved on GitHub to {}; refusing release projection",
@@ -423,8 +417,7 @@ fn archive_managed_change_if_needed(
             directory.display()
         ));
     }
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("{}: {error}", directory.display()))?;
+    fs::create_dir_all(&directory).map_err(|error| format!("{}: {error}", directory.display()))?;
     write_toml(directory.join("event.toml"), &event)?;
     write_toml(directory.join("before.toml"), &previous)?;
     fs::write(directory.join("before.notes.md"), previous_notes)
@@ -541,5 +534,97 @@ mod tests {
         let payload = update_payload(&release, &["state".into()]).unwrap();
         assert_eq!(payload["draft"], false);
         assert_eq!(payload["make_latest"], "false");
+    }
+
+    #[test]
+    fn stale_release_update_sends_no_patch() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = Arc::clone(&requests);
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buffer = [0u8; 8192];
+                let count = stream.read(&mut buffer).unwrap();
+                let request = String::from_utf8_lossy(&buffer[..count]);
+                let line = request.lines().next().unwrap_or_default().to_string();
+                seen.lock().unwrap().push(line.clone());
+                let body = if line.contains("/releases/42 ") {
+                    format!(
+                        r#"{{"id":42,"html_url":"https://example.invalid/release","tag_name":"v0.1.0","name":"Externally changed","body":"notes","draft":true,"prerelease":false,"published_at":null}}"#
+                    )
+                } else {
+                    format!(r#"[{{"name":"v0.1.0","commit":{{"sha":"{SHA}"}}}}]"#)
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .unwrap();
+            }
+        });
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "allodium-release-stale-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let previous = ObservedRelease {
+            schema: OBSERVED_RELEASE_SCHEMA_V0.into(),
+            canonical_id: "release-0001".into(),
+            id: 42,
+            url: "https://example.invalid/release".into(),
+            name: "Previously observed".into(),
+            tag_name: "v0.1.0".into(),
+            commit_sha: SHA.into(),
+            draft: true,
+            prerelease: false,
+            published_at: None,
+            observed_at: "2026-09-16T00:00:00Z".into(),
+        };
+        write_observed_release_snapshot(&root, "github", &previous, "notes").unwrap();
+        let canonical = CanonicalRelease {
+            record: allodium_core::release::ReleaseRecord {
+                schema: allodium_core::release::RELEASE_SCHEMA_V0.into(),
+                id: "release-0001".into(),
+                title: "Canonical title".into(),
+                version: "0.1.0".into(),
+                state: "draft".into(),
+                revision: SHA.into(),
+                tag: Some("v0.1.0".into()),
+            },
+            notes: "notes".into(),
+            directory: std::path::PathBuf::new(),
+        };
+        let adapter = GitHubAdapter {
+            client: reqwest::blocking::Client::builder().build().unwrap(),
+            repository: "owner/repo".into(),
+            token: Some("test-token".into()),
+            api_base: format!("http://{address}"),
+        };
+
+        let error =
+            apply_update_release(&adapter, &root, "github", &canonical, 42, &["title".into()])
+                .unwrap_err();
+        assert!(error.contains("refusing stale update"), "{error}");
+        server.join().unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|request| request.starts_with("GET ")));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

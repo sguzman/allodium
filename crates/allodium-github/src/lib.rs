@@ -1,3 +1,4 @@
+mod release;
 mod review_ingress;
 mod wiki;
 
@@ -8,6 +9,7 @@ use allodium_core::github::{
     ObservedReview, PLAN_SCHEMA_V0, REVIEW_MAPPINGS_SCHEMA_V0, ReviewMapping, ReviewMappings,
     render_issue_body, render_review_body,
 };
+use allodium_core::release::{CanonicalRelease, load_releases};
 use allodium_core::{CanonicalIssue, CanonicalReview, load_issues, load_remote, load_reviews};
 use chrono::Utc;
 use reqwest::blocking::{Client, RequestBuilder};
@@ -41,6 +43,8 @@ pub struct ObserveReport {
     pub reviews_observed: usize,
     pub wikis_observed: usize,
     pub wiki_remote_changes_archived: usize,
+    pub releases_observed: usize,
+    pub release_managed_changes_archived: usize,
     pub review_conversation_comment_snapshots_archived: usize,
     pub review_submission_snapshots_archived: usize,
     pub review_inline_comment_snapshots_archived: usize,
@@ -65,6 +69,9 @@ pub struct ApplyReport {
     pub wikis_observed: usize,
     pub wikis_updated: usize,
     pub wiki_bootstrap_required: usize,
+    pub releases_created: usize,
+    pub releases_updated: usize,
+    pub releases_observed: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -325,6 +332,10 @@ impl GitHubAdapter {
             report.review_social_disappearances_archived += social.disappearances_archived;
         }
 
+        let release_report = release::observe_releases(self, root, remote_name)?;
+        report.releases_observed += release_report.observed;
+        report.release_managed_changes_archived += release_report.managed_changes_archived;
+
         for issue in self.fetch_repository_issues()? {
             if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
                 continue;
@@ -367,6 +378,10 @@ impl GitHubAdapter {
         let reviews = load_reviews(root)?
             .into_iter()
             .map(|review| (review.record.id.clone(), review))
+            .collect::<BTreeMap<_, _>>();
+        let releases = load_releases(root)?
+            .into_iter()
+            .map(|release| (release.record.id.clone(), release))
             .collect::<BTreeMap<_, _>>();
         let mut issue_mappings = load_mappings(root, &plan.remote)?;
         let mut review_mappings = load_review_mappings(root, &plan.remote)?;
@@ -511,6 +526,36 @@ impl GitHubAdapter {
                         &now(),
                     )?;
                     report.reviews_updated += 1;
+                }
+                "create_release" => {
+                    let canonical = require_release(&releases, &operation.canonical_id)?;
+                    release::apply_create_release(self, root, &plan.remote, canonical)?;
+                    report.releases_created += 1;
+                }
+                "observe_release" => {
+                    let _canonical = require_release(&releases, &operation.canonical_id)?;
+                    let release_id = require_number(operation)?;
+                    release::apply_observe_release(
+                        self,
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        release_id,
+                    )?;
+                    report.releases_observed += 1;
+                }
+                "update_release" => {
+                    let canonical = require_release(&releases, &operation.canonical_id)?;
+                    let release_id = require_number(operation)?;
+                    release::apply_update_release(
+                        self,
+                        root,
+                        &plan.remote,
+                        canonical,
+                        release_id,
+                        &operation.fields,
+                    )?;
+                    report.releases_updated += 1;
                 }
                 "observe_wiki" => {
                     let wiki_report = wiki::observe_wiki(self, root, &plan.remote)?;
@@ -1539,10 +1584,19 @@ fn require_review<'a>(
         .ok_or_else(|| format!("plan references missing canonical review {canonical_id:?}"))
 }
 
+fn require_release<'a>(
+    releases: &'a BTreeMap<String, CanonicalRelease>,
+    canonical_id: &str,
+) -> Result<&'a CanonicalRelease, String> {
+    releases
+        .get(canonical_id)
+        .ok_or_else(|| format!("plan references missing canonical release {canonical_id:?}"))
+}
+
 fn require_number(operation: &allodium_core::github::GitHubOperation) -> Result<u64, String> {
     operation.number.ok_or_else(|| {
         format!(
-            "GitHub operation {:?} for {:?} is missing issue number",
+            "GitHub operation {:?} for {:?} is missing its remote numeric identifier",
             operation.action, operation.canonical_id
         )
     })
