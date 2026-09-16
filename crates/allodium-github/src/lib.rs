@@ -831,6 +831,7 @@ fn write_observed_review(
         head_ref: review.head.git_ref.clone(),
         base_sha: review.base.sha.clone(),
         head_sha: review.head.sha.clone(),
+        merged_at: review.merged_at.clone(),
         remote_updated_at: review.updated_at.clone(),
         observed_at: observed_at.into(),
     };
@@ -1181,6 +1182,7 @@ fn archive_review_managed_change_if_needed(
         head_ref: live.head.git_ref.clone(),
         base_sha: live.base.sha.clone(),
         head_sha: live.head.sha.clone(),
+        merged_at: live.merged_at.clone(),
         remote_updated_at: live.updated_at.clone(),
         observed_at: observed_at.into(),
     };

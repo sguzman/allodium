@@ -60,6 +60,8 @@ pub struct ObservedReview {
     pub head_ref: String,
     pub base_sha: String,
     pub head_sha: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_at: Option<String>,
     pub remote_updated_at: String,
     pub observed_at: String,
 }
@@ -813,6 +815,37 @@ mod tests {
         assert!(error.contains("merge as observed remote evidence"));
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn observed_review_merge_timestamp_is_optional_and_round_trips() {
+        let legacy = r#"
+schema = "allodium.github.observed-review/v0"
+canonical_id = "review-0001"
+number = 23
+state = "closed"
+title = "Test review"
+url = "https://github.com/owner/repo/pull/23"
+base_ref = "main"
+head_ref = "feature"
+base_sha = "base-sha"
+head_sha = "head-sha"
+remote_updated_at = "2026-09-16T12:00:00Z"
+observed_at = "2026-09-16T12:01:00Z"
+"#;
+        let legacy: ObservedReview = toml::from_str(legacy).unwrap();
+        assert_eq!(legacy.merged_at, None);
+
+        let merged = ObservedReview {
+            state: "merged".into(),
+            merged_at: Some("2026-09-16T12:02:00Z".into()),
+            ..legacy
+        };
+        let encoded = toml::to_string_pretty(&merged).unwrap();
+        assert!(encoded.contains("state = \"merged\""));
+        assert!(encoded.contains("merged_at = \"2026-09-16T12:02:00Z\""));
+        let decoded: ObservedReview = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, merged);
     }
 
     fn test_project(name: &str) -> PathBuf {
