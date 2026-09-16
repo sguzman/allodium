@@ -1,4 +1,5 @@
 pub mod github;
+pub mod github_wiki;
 pub mod wiki;
 
 use serde::{Deserialize, Serialize};
