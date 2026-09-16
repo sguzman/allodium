@@ -177,12 +177,14 @@ fn fetch_milestone(adapter: &GitHubAdapter, number: u64) -> Result<ApiMilestone,
 }
 
 fn create_payload(milestone: &CanonicalMilestone) -> serde_json::Value {
-    json!({
-        "title": milestone.record.title,
-        "state": milestone.record.state,
-        "description": milestone.description,
-        "due_on": canonical_due_on(milestone.record.due.as_deref()),
-    })
+    let mut object = serde_json::Map::new();
+    object.insert("title".into(), json!(milestone.record.title));
+    object.insert("state".into(), json!(milestone.record.state));
+    object.insert("description".into(), json!(milestone.description));
+    if let Some(due_on) = canonical_due_on(milestone.record.due.as_deref()) {
+        object.insert("due_on".into(), json!(due_on));
+    }
+    serde_json::Value::Object(object)
 }
 
 fn update_payload(
@@ -202,10 +204,13 @@ fn update_payload(
                 object.insert("state".into(), json!(milestone.record.state));
             }
             "due" => {
-                object.insert(
-                    "due_on".into(),
-                    json!(canonical_due_on(milestone.record.due.as_deref())),
-                );
+                let due_on = canonical_due_on(milestone.record.due.as_deref()).ok_or_else(|| {
+                    format!(
+                        "GitHub milestone projection v0 cannot clear an existing due date through the documented REST contract; canonical milestone {:?} has no due date",
+                        milestone.record.id
+                    )
+                })?;
+                object.insert("due_on".into(), json!(due_on));
             }
             other => {
                 return Err(format!(
@@ -359,6 +364,43 @@ mod tests {
             Some("2026-12-01T23:59:59Z".into())
         );
         assert_eq!(canonical_due_on(None), None);
+    }
+
+    #[test]
+    fn create_without_due_omits_due_on_field() {
+        let milestone = CanonicalMilestone {
+            record: allodium_core::milestone::MilestoneRecord {
+                schema: allodium_core::milestone::MILESTONE_SCHEMA_V0.into(),
+                id: "milestone-0001".into(),
+                title: "M4".into(),
+                state: "open".into(),
+                due: None,
+            },
+            description: "Description".into(),
+            directory: std::path::PathBuf::new(),
+        };
+        let payload = create_payload(&milestone);
+        assert!(payload.get("due_on").is_none());
+    }
+
+    #[test]
+    fn update_refuses_undocumented_due_clear() {
+        let milestone = CanonicalMilestone {
+            record: allodium_core::milestone::MilestoneRecord {
+                schema: allodium_core::milestone::MILESTONE_SCHEMA_V0.into(),
+                id: "milestone-0001".into(),
+                title: "M4".into(),
+                state: "open".into(),
+                due: None,
+            },
+            description: "Description".into(),
+            directory: std::path::PathBuf::new(),
+        };
+        let error = update_payload(&milestone, &["due".into()]).unwrap_err();
+        assert!(
+            error.contains("cannot clear an existing due date"),
+            "{error}"
+        );
     }
 
     #[test]
