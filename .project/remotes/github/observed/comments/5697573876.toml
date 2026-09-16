@@ -1,0 +1,9 @@
+schema = "allodium.github.observed-comment/v0"
+canonical_id = "issue-0002"
+issue_number = 2
+comment_id = 5697573876
+remote_updated_at = "2026-09-16T12:40:22Z"
+url = "https://github.com/sguzman/allodium/issues/2#issuecomment-5697573876"
+actor_remote_id = "6679733"
+actor_login = "sguzman"
+observed_at = "2026-09-16T13:15:56Z"

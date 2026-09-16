@@ -1,0 +1,1 @@
+M1 dogfood checkpoint: the deterministic filesystem-only GitHub issue planner is now implemented and passing CI. This comment intentionally originates on GitHub so Allodium can use it as the first real inbound-provenance fixture for `issue-0002`; it is remote social state, not canonical issue content.
