@@ -1,3 +1,5 @@
+mod review_ingress;
+
 use allodium_core::github::{
     ArchiveOutcome, GitHubPlan, INCOMING_EVENT_SCHEMA_V0, ISSUE_MAPPINGS_SCHEMA_V0, IncomingActor,
     IncomingEvent, IncomingIssueComment, IncomingSource, IncomingTarget, IssueMapping,
@@ -36,6 +38,11 @@ pub struct GitHubAdapter {
 pub struct ObserveReport {
     pub issues_observed: usize,
     pub reviews_observed: usize,
+    pub review_conversation_comment_snapshots_archived: usize,
+    pub review_submission_snapshots_archived: usize,
+    pub review_inline_comment_snapshots_archived: usize,
+    pub review_thread_snapshots_archived: usize,
+    pub review_social_disappearances_archived: usize,
     pub comments_archived: usize,
     pub comment_edits_archived: usize,
     pub comment_disappearances_archived: usize,
@@ -294,6 +301,22 @@ impl GitHubAdapter {
             )?;
             write_observed_review(root, remote_name, &canonical_id, &review, &observed_at)?;
             report.reviews_observed += 1;
+            let social = review_ingress::archive_review_social(
+                self,
+                root,
+                remote_name,
+                &canonical_id,
+                mapping.number,
+                &observed_at,
+            )?;
+            report.review_conversation_comment_snapshots_archived +=
+                social.conversation_comment_snapshots_archived;
+            report.review_submission_snapshots_archived +=
+                social.review_submission_snapshots_archived;
+            report.review_inline_comment_snapshots_archived +=
+                social.inline_comment_snapshots_archived;
+            report.review_thread_snapshots_archived += social.thread_snapshots_archived;
+            report.review_social_disappearances_archived += social.disappearances_archived;
         }
 
         for issue in self.fetch_repository_issues()? {
@@ -662,7 +685,7 @@ impl GitHubAdapter {
             let body = response
                 .text()
                 .unwrap_or_else(|_| "<unreadable response body>".into());
-            return Err(format!("GitHub API returned {status}: {body}"));
+            return Err(github_api_error(status, &body));
         }
         response
             .json()
@@ -683,6 +706,17 @@ pub fn load_plan(path: impl AsRef<Path>) -> Result<GitHubPlan, String> {
     let path = path.as_ref();
     let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
     toml::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn github_api_error(status: reqwest::StatusCode, body: &str) -> String {
+    if status == reqwest::StatusCode::FORBIDDEN
+        && body.contains("GitHub Actions is not permitted to create or approve pull requests")
+    {
+        return format!(
+            "GitHub capability blocked: the repository-level Actions policy forbids GITHUB_TOKEN from creating or approving pull requests even when the workflow has pull-requests: write. The canonical review was not mapped or mutated. Enable GitHub's repository setting that allows Actions to create/approve pull requests, or execute the same explicit Allodium plan with a different authorized token/executor. Provider response: {body}"
+        );
+    }
+    format!("GitHub API returned {status}: {body}")
 }
 
 fn github_token_from_environment() -> Option<String> {
@@ -1535,6 +1569,22 @@ fn write_toml(path: impl AsRef<Path>, value: &impl Serialize) -> Result<(), Stri
         fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
     }
     fs::write(path, text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod api_error_tests {
+    use super::*;
+
+    #[test]
+    fn actions_pull_request_policy_block_is_diagnosed_as_capability_boundary() {
+        let error = github_api_error(
+            reqwest::StatusCode::FORBIDDEN,
+            r#"{"message":"GitHub Actions is not permitted to create or approve pull requests."}"#,
+        );
+        assert!(error.contains("GitHub capability blocked"));
+        assert!(error.contains("repository-level Actions policy"));
+        assert!(error.contains("canonical review was not mapped or mutated"));
+    }
 }
 
 #[cfg(test)]

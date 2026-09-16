@@ -111,6 +111,26 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
         Ok(report) => {
             println!("observed {} GitHub issue(s)", report.issues_observed);
             println!("observed {} GitHub review(s)", report.reviews_observed);
+            println!(
+                "archived {} PR conversation-comment snapshot(s)",
+                report.review_conversation_comment_snapshots_archived
+            );
+            println!(
+                "archived {} PR review-submission snapshot(s)",
+                report.review_submission_snapshots_archived
+            );
+            println!(
+                "archived {} PR inline-comment snapshot(s)",
+                report.review_inline_comment_snapshots_archived
+            );
+            println!(
+                "archived {} PR inline-thread snapshot(s)",
+                report.review_thread_snapshots_archived
+            );
+            println!(
+                "archived {} PR social disappearance(s)",
+                report.review_social_disappearances_archived
+            );
             println!("archived {} new comment(s)", report.comments_archived);
             println!(
                 "archived {} edited comment revision(s)",
