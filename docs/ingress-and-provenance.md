@@ -13,10 +13,10 @@ For example:
 ```text
 comment created -> event A
 comment edited  -> event B
-comment deleted -> event C
+comment no longer observed -> event C
 ```
 
-This lets the repository preserve history that a provider's current UI may no longer show.
+This lets the repository preserve history that a provider's current UI may no longer show without claiming facts the provider surface cannot prove.
 
 ## Deterministic event identity
 
@@ -40,6 +40,22 @@ The system must not fabricate an edit event merely because two polls returned di
 Representation-only differences are not project history. For example, a trailing newline added or omitted by a serialization boundary must not become a claimed remote body edit when the durable text is otherwise equivalent.
 
 Missing provider fields remain missing. For example, if the adapter receives a comment but the integration surface does not expose its provider `created_at`, the normalized event omits `source.created_at` and records the limitation in `evidence`; it does not substitute the local capture time and pretend that was the provider creation time.
+
+## Comments no longer observed
+
+A comment that was previously observed and later disappears from GitHub's current issue-comment listing is evidence of **absence from that observation surface**, not proof of a particular deletion event.
+
+Allodium therefore archives an append-only event with kind:
+
+```text
+issue.comment.no_longer_observed
+```
+
+The event preserves the last-known comment body, provider object ID, URL, last-known provider `updated_at`, and last-known actor identity. Its evidence text explicitly states that no deletion actor or exact deletion timestamp is asserted.
+
+The deterministic event identity is derived from the comment ID and its last-known provider revision. Repeated polls while the same comment remains absent therefore do not create repeated history.
+
+If a provider later supplies a stronger deletion event or audit record, that stronger evidence can be archived separately. It must not retroactively rewrite the weaker earlier observation.
 
 ## Unmapped remote issues
 
