@@ -1,6 +1,6 @@
 schema = "allodium.review/v0"
 id = "review-0001"
 title = "Dogfood canonical review projection"
-state = "open"
+state = "closed"
 base = "main"
 head = "dogfood/review-0001"
