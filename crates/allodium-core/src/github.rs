@@ -197,15 +197,30 @@ pub fn archive_issue_comment(
     let body_path = directory.join("body.md");
 
     if directory.exists() {
-        let existing_event = fs::read_to_string(&event_path)
+        let existing_event_text = fs::read_to_string(&event_path)
+            .map_err(|error| format!("{}: {error}", event_path.display()))?;
+        let existing_event: IncomingEvent = toml::from_str(&existing_event_text)
             .map_err(|error| format!("{}: {error}", event_path.display()))?;
         let existing_body = fs::read_to_string(&body_path)
             .map_err(|error| format!("{}: {error}", body_path.display()))?;
-        if existing_event == event_text && existing_body == comment.body {
+
+        // The creation event belongs to the remote object, not to a particular poll.
+        // Later observations may know richer timestamps or use stronger evidence labels.
+        // Preserve the first archived evidence when the durable identity and body agree.
+        let same_creation = existing_event.schema == event.schema
+            && existing_event.id == event.id
+            && existing_event.remote == event.remote
+            && existing_event.kind == event.kind
+            && existing_event.target == event.target
+            && existing_event.actor == event.actor
+            && existing_event.source.remote_object_type == event.source.remote_object_type
+            && existing_event.source.remote_object_id == event.source.remote_object_id
+            && existing_event.source.url == event.source.url;
+        if same_creation && existing_body == comment.body {
             return Ok(ArchiveOutcome::Existing(directory));
         }
         return Err(format!(
-            "incoming event collision at {}; existing evidence differs",
+            "incoming event collision at {}; durable creation evidence differs",
             directory.display()
         ));
     }
