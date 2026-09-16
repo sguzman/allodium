@@ -271,7 +271,12 @@ mod tests {
 
         let report = validate(&root);
         assert!(!report.is_ok());
-        assert!(report.errors.iter().any(|error| error.contains("must match directory")));
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("must match directory"))
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
