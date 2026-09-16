@@ -26,7 +26,8 @@ Goal: one canonical issue can be projected to GitHub and externally originated i
 - [x] Stable mapping files.
 - [x] Define exact observed issue snapshot format, including body.
 - [ ] Fetch/refresh remote issue observations through the adapter.
-- [ ] Capture external comments.
+- [x] Define and implement idempotent external-comment provenance archival.
+- [x] Dogfood one real GitHub comment into the incoming filesystem archive.
 - [ ] Capture externally changed managed fields without silently accepting them as canonical.
 - [x] Dry-run plan output before mutations.
 - [x] Idempotent reconciliation tests.
