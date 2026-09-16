@@ -1,7 +1,7 @@
 use allodium_core::github::{
-    ArchiveOutcome, GitHubPlan, IncomingActor, IncomingEvent, IncomingIssueComment, IncomingSource,
-    IncomingTarget, IssueMapping, IssueMappings, ObservedIssue, INCOMING_EVENT_SCHEMA_V0,
-    ISSUE_MAPPINGS_SCHEMA_V0, OBSERVED_ISSUE_SCHEMA_V0, PLAN_SCHEMA_V0, render_issue_body,
+    ArchiveOutcome, GitHubPlan, INCOMING_EVENT_SCHEMA_V0, ISSUE_MAPPINGS_SCHEMA_V0, IncomingActor,
+    IncomingEvent, IncomingIssueComment, IncomingSource, IncomingTarget, IssueMapping,
+    IssueMappings, OBSERVED_ISSUE_SCHEMA_V0, ObservedIssue, PLAN_SCHEMA_V0, render_issue_body,
 };
 use allodium_core::{CanonicalIssue, load_issues, load_remote};
 use chrono::Utc;
@@ -184,11 +184,7 @@ impl GitHubAdapter {
         Ok(report)
     }
 
-    pub fn apply(
-        &self,
-        root: impl AsRef<Path>,
-        plan: &GitHubPlan,
-    ) -> Result<ApplyReport, String> {
+    pub fn apply(&self, root: impl AsRef<Path>, plan: &GitHubPlan) -> Result<ApplyReport, String> {
         let root = root.as_ref();
         if plan.schema != PLAN_SCHEMA_V0 {
             return Err(format!(
@@ -233,10 +229,8 @@ impl GitHubAdapter {
                     }
                     let mut created = self.create_issue(issue)?;
                     if issue.record.state == "closed" {
-                        created = self.patch_issue(
-                            created.number,
-                            &json!({ "state": "closed" }),
-                        )?;
+                        created =
+                            self.patch_issue(created.number, &json!({ "state": "closed" }))?;
                     }
                     mappings.issues.insert(
                         operation.canonical_id.clone(),
@@ -402,8 +396,7 @@ impl GitHubAdapter {
     fn require_write_token(&self) -> Result<(), String> {
         if self.token.is_none() {
             return Err(
-                "GitHub mutation requires ALLODIUM_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN"
-                    .into(),
+                "GitHub mutation requires ALLODIUM_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN".into(),
             );
         }
         Ok(())
@@ -473,8 +466,7 @@ fn write_observed_issue(
         .join(".project/remotes")
         .join(remote_name)
         .join("observed/issues");
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("{}: {error}", directory.display()))?;
+    fs::create_dir_all(&directory).map_err(|error| format!("{}: {error}", directory.display()))?;
 
     let observed = ObservedIssue {
         schema: OBSERVED_ISSUE_SCHEMA_V0.into(),
@@ -547,8 +539,8 @@ fn archive_managed_change_if_needed(
 
     let old_text = fs::read_to_string(&metadata_path)
         .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
-    let old: ObservedIssue =
-        toml::from_str(&old_text).map_err(|error| format!("{}: {error}", metadata_path.display()))?;
+    let old: ObservedIssue = toml::from_str(&old_text)
+        .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
     let old_body = fs::read_to_string(&body_path)
         .map_err(|error| format!("{}: {error}", body_path.display()))?;
     let new_body = live.body.as_deref().unwrap_or_default();
@@ -636,8 +628,7 @@ fn archive_comment_observation(
         .join(".project/remotes")
         .join(remote_name)
         .join("observed/comments");
-    fs::create_dir_all(&directory)
-        .map_err(|error| format!("{}: {error}", directory.display()))?;
+    fs::create_dir_all(&directory).map_err(|error| format!("{}: {error}", directory.display()))?;
     let metadata_path = directory.join(format!("{}.toml", comment.id));
     let body_path = directory.join(format!("{}.body.md", comment.id));
     let new_body = comment.body.as_deref().unwrap_or_default();
@@ -672,8 +663,8 @@ fn archive_comment_observation(
 
     let old_text = fs::read_to_string(&metadata_path)
         .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
-    let old: ObservedComment =
-        toml::from_str(&old_text).map_err(|error| format!("{}: {error}", metadata_path.display()))?;
+    let old: ObservedComment = toml::from_str(&old_text)
+        .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
     let old_body = fs::read_to_string(&body_path)
         .map_err(|error| format!("{}: {error}", body_path.display()))?;
     if old.remote_updated_at == comment.updated_at && old_body == new_body {
@@ -873,14 +864,7 @@ mod tests {
             state: "open".into(),
             updated_at: "2026-09-16T12:00:00Z".into(),
         };
-        write_observed_issue(
-            &root,
-            "github",
-            "issue-0007",
-            &old,
-            "2026-09-16T12:01:00Z",
-        )
-        .unwrap();
+        write_observed_issue(&root, "github", "issue-0007", &old, "2026-09-16T12:01:00Z").unwrap();
         let new = ApiIssue {
             title: "Edited remotely".into(),
             body: Some("New body".into()),
@@ -899,7 +883,12 @@ mod tests {
             1
         );
         let incoming = root.join(".project/remotes/github/incoming/2026/09");
-        let event_dir = fs::read_dir(incoming).unwrap().next().unwrap().unwrap().path();
+        let event_dir = fs::read_dir(incoming)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
         assert!(event_dir.join("before.body.md").exists());
         assert!(event_dir.join("after.body.md").exists());
 

@@ -102,7 +102,10 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
         Ok(report) => {
             println!("observed {} GitHub issue(s)", report.issues_observed);
             println!("archived {} new comment(s)", report.comments_archived);
-            println!("archived {} edited comment revision(s)", report.comment_edits_archived);
+            println!(
+                "archived {} edited comment revision(s)",
+                report.comment_edits_archived
+            );
             println!(
                 "archived {} managed-field remote change(s)",
                 report.managed_changes_archived
