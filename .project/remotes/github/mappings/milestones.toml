@@ -1,0 +1,5 @@
+schema = "allodium.github.milestone-mappings/v0"
+
+[milestones.milestone-0001]
+number = 1
+url = "https://github.com/sguzman/allodium/milestone/1"
