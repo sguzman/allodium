@@ -33,23 +33,13 @@ jobs:
               text = text.replace(old, new, 1)
 
           replace_once(
-              '''    repository: String,
-              token: Option<String>,
-          }''',
-              '''    repository: String,
-              token: Option<String>,
-              api_base: String,
-          }''',
+              '    repository: String,\n    token: Option<String>,\n}',
+              '    repository: String,\n    token: Option<String>,\n    api_base: String,\n}',
               'adapter api base field',
           )
           replace_once(
-              '''            repository: remote.repository,
-                  token: github_token_from_environment(),
-              })''',
-              '''            repository: remote.repository,
-                  token: github_token_from_environment(),
-                  api_base: API_BASE.into(),
-              })''',
+              '        Ok(Self {\n            client,\n            repository: remote.repository,\n            token: github_token_from_environment(),\n        })',
+              '        Ok(Self {\n            client,\n            repository: remote.repository,\n            token: github_token_from_environment(),\n            api_base: API_BASE.into(),\n        })',
               'adapter api base default',
           )
           replace_once(
@@ -67,7 +57,7 @@ jobs:
               'self.send(self.request(self.client.patch(self.api_url(path))).json(payload))',
               'PATCH api base',
           )
-          marker = '''    fn request(&self, request: RequestBuilder) -> RequestBuilder {'''
+          marker = '    fn request(&self, request: RequestBuilder) -> RequestBuilder {'
           if marker not in text:
               raise SystemExit('api_url method insertion anchor not found')
           method = '''    fn api_url(&self, path: &str) -> String {
@@ -77,16 +67,12 @@ jobs:
           '''
           text = text.replace(marker, method + marker, 1)
           replace_once(
-              '''fn api_url(path: &str) -> String {
-              format!("{API_BASE}{path}")
-          }
-
-          ''',
+              'fn api_url(path: &str) -> String {\n    format!("{API_BASE}{path}")\n}\n\n',
               '',
               'old global api_url',
           )
 
-          marker = '''    fn test_root(name: &str) -> PathBuf {'''
+          marker = '    fn test_root(name: &str) -> PathBuf {'
           if marker not in text:
               raise SystemExit('stale HTTP test insertion anchor not found')
           test = r'''    #[test]
