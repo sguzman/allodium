@@ -1,9 +1,11 @@
 use allodium_core::github::{
     ArchiveOutcome, GitHubPlan, INCOMING_EVENT_SCHEMA_V0, ISSUE_MAPPINGS_SCHEMA_V0, IncomingActor,
     IncomingEvent, IncomingIssueComment, IncomingSource, IncomingTarget, IssueMapping,
-    IssueMappings, OBSERVED_ISSUE_SCHEMA_V0, ObservedIssue, PLAN_SCHEMA_V0, render_issue_body,
+    IssueMappings, OBSERVED_ISSUE_SCHEMA_V0, OBSERVED_REVIEW_SCHEMA_V0, ObservedIssue,
+    ObservedReview, PLAN_SCHEMA_V0, REVIEW_MAPPINGS_SCHEMA_V0, ReviewMapping, ReviewMappings,
+    render_issue_body, render_review_body,
 };
-use allodium_core::{CanonicalIssue, load_issues, load_remote};
+use allodium_core::{CanonicalIssue, CanonicalReview, load_issues, load_remote, load_reviews};
 use chrono::Utc;
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
@@ -33,10 +35,12 @@ pub struct GitHubAdapter {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ObserveReport {
     pub issues_observed: usize,
+    pub reviews_observed: usize,
     pub comments_archived: usize,
     pub comment_edits_archived: usize,
     pub comment_disappearances_archived: usize,
     pub managed_changes_archived: usize,
+    pub review_managed_changes_archived: usize,
     pub unmapped_issues_archived: usize,
 }
 
@@ -45,6 +49,9 @@ pub struct ApplyReport {
     pub issues_created: usize,
     pub issues_updated: usize,
     pub issues_observed: usize,
+    pub reviews_created: usize,
+    pub reviews_updated: usize,
+    pub reviews_observed: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -150,6 +157,26 @@ struct ApiIssue {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct ApiPullRef {
+    #[serde(rename = "ref")]
+    git_ref: String,
+    sha: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ApiPullRequest {
+    number: u64,
+    html_url: String,
+    title: String,
+    body: Option<String>,
+    state: String,
+    merged_at: Option<String>,
+    updated_at: String,
+    base: ApiPullRef,
+    head: ApiPullRef,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct ApiComment {
     id: u64,
     html_url: String,
@@ -204,15 +231,16 @@ impl GitHubAdapter {
         remote_name: &str,
     ) -> Result<ObserveReport, String> {
         let root = root.as_ref();
-        let mappings = load_mappings(root, remote_name)?;
-        let mapped_numbers = mappings
+        let issue_mappings = load_mappings(root, remote_name)?;
+        let review_mappings = load_review_mappings(root, remote_name)?;
+        let mapped_numbers = issue_mappings
             .issues
             .values()
             .map(|mapping| mapping.number)
             .collect::<BTreeSet<_>>();
         let mut report = ObserveReport::default();
 
-        for (canonical_id, mapping) in mappings.issues {
+        for (canonical_id, mapping) in issue_mappings.issues {
             let observed_at = now();
             let issue = self.fetch_issue(mapping.number)?;
             report.managed_changes_archived += archive_managed_change_if_needed(
@@ -254,6 +282,20 @@ impl GitHubAdapter {
             )?;
         }
 
+        for (canonical_id, mapping) in review_mappings.reviews {
+            let observed_at = now();
+            let review = self.fetch_pull_request(mapping.number)?;
+            report.review_managed_changes_archived += archive_review_managed_change_if_needed(
+                root,
+                remote_name,
+                &canonical_id,
+                &review,
+                &observed_at,
+            )?;
+            write_observed_review(root, remote_name, &canonical_id, &review, &observed_at)?;
+            report.reviews_observed += 1;
+        }
+
         for issue in self.fetch_repository_issues()? {
             if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
                 continue;
@@ -289,21 +331,20 @@ impl GitHubAdapter {
             .into_iter()
             .map(|issue| (issue.record.id.clone(), issue))
             .collect::<BTreeMap<_, _>>();
-        let mut mappings = load_mappings(root, &plan.remote)?;
+        let reviews = load_reviews(root)?
+            .into_iter()
+            .map(|review| (review.record.id.clone(), review))
+            .collect::<BTreeMap<_, _>>();
+        let mut issue_mappings = load_mappings(root, &plan.remote)?;
+        let mut review_mappings = load_review_mappings(root, &plan.remote)?;
         let mut report = ApplyReport::default();
 
         for operation in &plan.operations {
-            let issue = issues.get(&operation.canonical_id).ok_or_else(|| {
-                format!(
-                    "plan references missing canonical issue {:?}",
-                    operation.canonical_id
-                )
-            })?;
-
             match operation.action.as_str() {
                 "create_issue" => {
+                    let issue = require_issue(&issues, &operation.canonical_id)?;
                     self.require_write_token()?;
-                    if mappings.issues.contains_key(&operation.canonical_id) {
+                    if issue_mappings.issues.contains_key(&operation.canonical_id) {
                         return Err(format!(
                             "refusing create: {:?} already has a GitHub mapping",
                             operation.canonical_id
@@ -314,14 +355,14 @@ impl GitHubAdapter {
                         created =
                             self.patch_issue(created.number, &json!({ "state": "closed" }))?;
                     }
-                    mappings.issues.insert(
+                    issue_mappings.issues.insert(
                         operation.canonical_id.clone(),
                         IssueMapping {
                             number: created.number,
                             url: created.html_url.clone(),
                         },
                     );
-                    save_mappings(root, &plan.remote, &mappings)?;
+                    save_mappings(root, &plan.remote, &issue_mappings)?;
                     write_observed_issue(
                         root,
                         &plan.remote,
@@ -332,6 +373,7 @@ impl GitHubAdapter {
                     report.issues_created += 1;
                 }
                 "observe_issue" => {
+                    let _issue = require_issue(&issues, &operation.canonical_id)?;
                     let number = require_number(operation)?;
                     let live = self.fetch_issue(number)?;
                     archive_managed_change_if_needed(
@@ -351,6 +393,7 @@ impl GitHubAdapter {
                     report.issues_observed += 1;
                 }
                 "update_issue" => {
+                    let issue = require_issue(&issues, &operation.canonical_id)?;
                     self.require_write_token()?;
                     let number = require_number(operation)?;
                     self.assert_not_stale(root, &plan.remote, &operation.canonical_id, number)?;
@@ -365,6 +408,77 @@ impl GitHubAdapter {
                     )?;
                     report.issues_updated += 1;
                 }
+                "create_pull_request" => {
+                    let review = require_review(&reviews, &operation.canonical_id)?;
+                    self.require_write_token()?;
+                    if review_mappings
+                        .reviews
+                        .contains_key(&operation.canonical_id)
+                    {
+                        return Err(format!(
+                            "refusing create: {:?} already has a GitHub review mapping",
+                            operation.canonical_id
+                        ));
+                    }
+                    let created = self.create_pull_request(review)?;
+                    review_mappings.reviews.insert(
+                        operation.canonical_id.clone(),
+                        ReviewMapping {
+                            number: created.number,
+                            url: created.html_url.clone(),
+                        },
+                    );
+                    save_review_mappings(root, &plan.remote, &review_mappings)?;
+                    write_observed_review(
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        &created,
+                        &now(),
+                    )?;
+                    report.reviews_created += 1;
+                }
+                "observe_pull_request" => {
+                    let _review = require_review(&reviews, &operation.canonical_id)?;
+                    let number = require_number(operation)?;
+                    let live = self.fetch_pull_request(number)?;
+                    archive_review_managed_change_if_needed(
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        &live,
+                        &now(),
+                    )?;
+                    write_observed_review(
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        &live,
+                        &now(),
+                    )?;
+                    report.reviews_observed += 1;
+                }
+                "update_pull_request" => {
+                    let review = require_review(&reviews, &operation.canonical_id)?;
+                    self.require_write_token()?;
+                    let number = require_number(operation)?;
+                    self.assert_review_not_stale(
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        number,
+                    )?;
+                    let payload = update_review_payload(review, &operation.fields)?;
+                    let updated = self.patch_pull_request(number, &payload)?;
+                    write_observed_review(
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        &updated,
+                        &now(),
+                    )?;
+                    report.reviews_updated += 1;
+                }
                 other => return Err(format!("unsupported GitHub plan operation {other:?}")),
             }
         }
@@ -374,6 +488,33 @@ impl GitHubAdapter {
 
     fn fetch_issue(&self, number: u64) -> Result<ApiIssue, String> {
         self.get(&format!("/repos/{}/issues/{number}", self.repository))
+    }
+
+    fn fetch_pull_request(&self, number: u64) -> Result<ApiPullRequest, String> {
+        self.get(&format!("/repos/{}/pulls/{number}", self.repository))
+    }
+
+    fn create_pull_request(&self, review: &CanonicalReview) -> Result<ApiPullRequest, String> {
+        self.post(
+            &format!("/repos/{}/pulls", self.repository),
+            &json!({
+                "title": review.record.title,
+                "body": render_review_body(review),
+                "base": review.record.base,
+                "head": review.record.head,
+            }),
+        )
+    }
+
+    fn patch_pull_request(
+        &self,
+        number: u64,
+        payload: &serde_json::Value,
+    ) -> Result<ApiPullRequest, String> {
+        self.patch(
+            &format!("/repos/{}/pulls/{number}", self.repository),
+            payload,
+        )
     }
 
     fn fetch_issue_comments(&self, number: u64) -> Result<Vec<ApiComment>, String> {
@@ -445,6 +586,31 @@ impl GitHubAdapter {
         if revision.number != number || revision.remote_updated_at != live.updated_at {
             return Err(format!(
                 "refusing stale update of {canonical_id}: GitHub changed after the recorded observation; observe and re-plan before applying"
+            ));
+        }
+        Ok(())
+    }
+
+    fn assert_review_not_stale(
+        &self,
+        root: &Path,
+        remote_name: &str,
+        canonical_id: &str,
+        number: u64,
+    ) -> Result<(), String> {
+        let observed = load_observed_review(root, remote_name, canonical_id)?.ok_or_else(|| {
+            format!(
+                "refusing update of {canonical_id}: no observed GitHub pull-request revision; run `allodium github observe` and re-plan"
+            )
+        })?;
+        let live = self.fetch_pull_request(number)?;
+        if observed.number != number
+            || observed.remote_updated_at != live.updated_at
+            || observed.base_sha != live.base.sha
+            || observed.head_sha != live.head.sha
+        {
+            return Err(format!(
+                "refusing stale update of {canonical_id}: GitHub pull request changed after the recorded observation; observe and re-plan before applying"
             ));
         }
         Ok(())
@@ -559,6 +725,112 @@ fn save_mappings(root: &Path, remote_name: &str, mappings: &IssueMappings) -> Re
     fs::create_dir_all(path.parent().expect("mapping path has parent"))
         .map_err(|error| format!("{}: {error}", path.display()))?;
     fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn load_review_mappings(root: &Path, remote_name: &str) -> Result<ReviewMappings, String> {
+    let path = root
+        .join(".project/remotes")
+        .join(remote_name)
+        .join("mappings/reviews.toml");
+    if !path.exists() {
+        return Ok(ReviewMappings {
+            schema: REVIEW_MAPPINGS_SCHEMA_V0.into(),
+            reviews: BTreeMap::new(),
+        });
+    }
+    let text = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mappings: ReviewMappings =
+        toml::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+    if mappings.schema != REVIEW_MAPPINGS_SCHEMA_V0 {
+        return Err(format!(
+            "{}: unsupported review mapping schema",
+            path.display()
+        ));
+    }
+    Ok(mappings)
+}
+
+fn save_review_mappings(
+    root: &Path,
+    remote_name: &str,
+    mappings: &ReviewMappings,
+) -> Result<(), String> {
+    let path = root
+        .join(".project/remotes")
+        .join(remote_name)
+        .join("mappings/reviews.toml");
+    let text = toml::to_string_pretty(mappings)
+        .map_err(|error| format!("could not serialize GitHub review mappings: {error}"))?;
+    fs::create_dir_all(path.parent().expect("mapping path has parent"))
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn normalized_review_state(review: &ApiPullRequest) -> String {
+    if review.merged_at.is_some() {
+        "merged".into()
+    } else {
+        review.state.clone()
+    }
+}
+
+fn write_observed_review(
+    root: &Path,
+    remote_name: &str,
+    canonical_id: &str,
+    review: &ApiPullRequest,
+    observed_at: &str,
+) -> Result<(), String> {
+    let directory = root
+        .join(".project/remotes")
+        .join(remote_name)
+        .join("observed/reviews");
+    fs::create_dir_all(&directory).map_err(|error| format!("{}: {error}", directory.display()))?;
+    let observed = ObservedReview {
+        schema: OBSERVED_REVIEW_SCHEMA_V0.into(),
+        canonical_id: canonical_id.into(),
+        number: review.number,
+        state: normalized_review_state(review),
+        title: review.title.clone(),
+        url: review.html_url.clone(),
+        base_ref: review.base.git_ref.clone(),
+        head_ref: review.head.git_ref.clone(),
+        base_sha: review.base.sha.clone(),
+        head_sha: review.head.sha.clone(),
+        remote_updated_at: review.updated_at.clone(),
+        observed_at: observed_at.into(),
+    };
+    write_toml(directory.join(format!("{canonical_id}.toml")), &observed)?;
+    fs::write(
+        directory.join(format!("{canonical_id}.body.md")),
+        review.body.as_deref().unwrap_or_default(),
+    )
+    .map_err(|error| format!("could not write observed GitHub pull-request body: {error}"))
+}
+
+fn load_observed_review(
+    root: &Path,
+    remote_name: &str,
+    canonical_id: &str,
+) -> Result<Option<ObservedReview>, String> {
+    let path = root
+        .join(".project/remotes")
+        .join(remote_name)
+        .join("observed/reviews")
+        .join(format!("{canonical_id}.toml"));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let observed: ObservedReview =
+        toml::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+    if observed.schema != OBSERVED_REVIEW_SCHEMA_V0 {
+        return Err(format!(
+            "{}: unsupported observed review schema",
+            path.display()
+        ));
+    }
+    Ok(Some(observed))
 }
 
 fn write_observed_issue(
@@ -782,6 +1054,105 @@ fn archive_managed_change_if_needed(
     write_toml(event_directory.join("after.toml"), &after)?;
     fs::write(event_directory.join("after.body.md"), new_body)
         .map_err(|error| format!("could not preserve new GitHub body: {error}"))?;
+    Ok(1)
+}
+
+fn archive_review_managed_change_if_needed(
+    root: &Path,
+    remote_name: &str,
+    canonical_id: &str,
+    live: &ApiPullRequest,
+    observed_at: &str,
+) -> Result<usize, String> {
+    let directory = root
+        .join(".project/remotes")
+        .join(remote_name)
+        .join("observed/reviews");
+    let metadata_path = directory.join(format!("{canonical_id}.toml"));
+    let body_path = directory.join(format!("{canonical_id}.body.md"));
+    if !metadata_path.exists() || !body_path.exists() {
+        return Ok(0);
+    }
+    let old_text = fs::read_to_string(&metadata_path)
+        .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
+    let old: ObservedReview = toml::from_str(&old_text)
+        .map_err(|error| format!("{}: {error}", metadata_path.display()))?;
+    let old_body = fs::read_to_string(&body_path)
+        .map_err(|error| format!("{}: {error}", body_path.display()))?;
+    let new_body = live.body.as_deref().unwrap_or_default();
+    let live_state = normalized_review_state(live);
+    let mut fields = Vec::new();
+    if old.title != live.title {
+        fields.push("title".into());
+    }
+    if old.state != live_state {
+        fields.push("state".into());
+    }
+    if old.base_ref != live.base.git_ref {
+        fields.push("base".into());
+    }
+    if old.head_ref != live.head.git_ref {
+        fields.push("head".into());
+    }
+    if old_body.trim_end() != new_body.trim_end() {
+        fields.push("body".into());
+    }
+    if fields.is_empty() {
+        return Ok(0);
+    }
+    let event_id = format!(
+        "{remote_name}-pull-request-{}-managed-change-{}",
+        live.number,
+        timestamp_slug(&live.updated_at)
+    );
+    let event_directory = incoming_directory(root, remote_name, observed_at, &event_id)?;
+    if event_directory.exists() {
+        return Ok(0);
+    }
+    fs::create_dir_all(&event_directory)
+        .map_err(|error| format!("{}: {error}", event_directory.display()))?;
+    let event = ManagedChangeEvent {
+        schema: MANAGED_CHANGE_SCHEMA_V0.into(),
+        id: event_id,
+        remote: remote_name.into(),
+        kind: "review.managed_fields.observed_change".into(),
+        observed_at: observed_at.into(),
+        evidence: "GitHub pull-request current-state observation changed since the previous local observation; the REST pull-request representation does not identify the editing actor, so no actor is asserted.".into(),
+        fields,
+        target: IncomingTarget {
+            canonical_id: canonical_id.into(),
+            remote_type: "pull_request".into(),
+            remote_id: live.number.to_string(),
+        },
+        source: ManagedChangeSource {
+            remote_object_type: "pull_request".into(),
+            remote_object_id: live.number.to_string(),
+            url: live.html_url.clone(),
+            remote_updated_at: live.updated_at.clone(),
+        },
+    };
+    write_toml(event_directory.join("event.toml"), &event)?;
+    fs::write(event_directory.join("before.toml"), old_text)
+        .map_err(|error| format!("could not preserve prior GitHub review observation: {error}"))?;
+    fs::write(event_directory.join("before.body.md"), old_body)
+        .map_err(|error| format!("could not preserve prior GitHub review body: {error}"))?;
+    let after = ObservedReview {
+        schema: OBSERVED_REVIEW_SCHEMA_V0.into(),
+        canonical_id: canonical_id.into(),
+        number: live.number,
+        state: live_state,
+        title: live.title.clone(),
+        url: live.html_url.clone(),
+        base_ref: live.base.git_ref.clone(),
+        head_ref: live.head.git_ref.clone(),
+        base_sha: live.base.sha.clone(),
+        head_sha: live.head.sha.clone(),
+        remote_updated_at: live.updated_at.clone(),
+        observed_at: observed_at.into(),
+    };
+    write_toml(event_directory.join("after.toml"), &after)?;
+    fs::write(event_directory.join("after.body.md"), new_body)
+        .map_err(|error| format!("could not preserve new GitHub review body: {error}"))?;
     Ok(1)
 }
 
@@ -1062,6 +1433,55 @@ fn update_payload(issue: &CanonicalIssue, fields: &[String]) -> serde_json::Valu
     serde_json::Value::Object(object)
 }
 
+fn update_review_payload(
+    review: &CanonicalReview,
+    fields: &[String],
+) -> Result<serde_json::Value, String> {
+    let mut object = serde_json::Map::new();
+    for field in fields {
+        match field.as_str() {
+            "title" => {
+                object.insert("title".into(), json!(review.record.title));
+            }
+            "body" => {
+                object.insert("body".into(), json!(render_review_body(review)));
+            }
+            "base" => {
+                object.insert("base".into(), json!(review.record.base));
+            }
+            "state" => {
+                if review.record.state == "merged" {
+                    return Err("merged review state is observation-only; it is not a pull-request update payload".into());
+                }
+                object.insert("state".into(), json!(review.record.state));
+            }
+            "head" => {
+                return Err("GitHub cannot retarget the head of an existing pull request".into());
+            }
+            _ => {}
+        }
+    }
+    Ok(serde_json::Value::Object(object))
+}
+
+fn require_issue<'a>(
+    issues: &'a BTreeMap<String, CanonicalIssue>,
+    canonical_id: &str,
+) -> Result<&'a CanonicalIssue, String> {
+    issues
+        .get(canonical_id)
+        .ok_or_else(|| format!("plan references missing canonical issue {canonical_id:?}"))
+}
+
+fn require_review<'a>(
+    reviews: &'a BTreeMap<String, CanonicalReview>,
+    canonical_id: &str,
+) -> Result<&'a CanonicalReview, String> {
+    reviews
+        .get(canonical_id)
+        .ok_or_else(|| format!("plan references missing canonical review {canonical_id:?}"))
+}
+
 fn require_number(operation: &allodium_core::github::GitHubOperation) -> Result<u64, String> {
     operation.number.ok_or_else(|| {
         format!(
@@ -1229,6 +1649,147 @@ mod tests {
         assert!(text.contains("kind = \"issue.unmapped.observed\""));
         assert!(text.contains("remote_object_id = \"44\""));
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn review_observation_writes_refs_revisions_and_body() {
+        let root = test_root("review-observe");
+        let review = ApiPullRequest {
+            number: 23,
+            html_url: "https://github.com/owner/repo/pull/23".into(),
+            title: "Remote review".into(),
+            body: Some("Remote review body\n".into()),
+            state: "open".into(),
+            merged_at: None,
+            updated_at: "2026-09-16T12:00:00Z".into(),
+            base: ApiPullRef {
+                git_ref: "main".into(),
+                sha: "base-sha".into(),
+            },
+            head: ApiPullRef {
+                git_ref: "feature".into(),
+                sha: "head-sha".into(),
+            },
+        };
+        write_observed_review(
+            &root,
+            "github",
+            "review-0001",
+            &review,
+            "2026-09-16T12:01:00Z",
+        )
+        .unwrap();
+        let directory = root.join(".project/remotes/github/observed/reviews");
+        let metadata = fs::read_to_string(directory.join("review-0001.toml")).unwrap();
+        assert!(metadata.contains("base_ref = \"main\""));
+        assert!(metadata.contains("head_sha = \"head-sha\""));
+        assert!(metadata.contains("remote_updated_at = \"2026-09-16T12:00:00Z\""));
+        assert_eq!(
+            fs::read_to_string(directory.join("review-0001.body.md")).unwrap(),
+            "Remote review body\n"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_review_update_is_rejected_before_patch_is_sent() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use std::time::Duration;
+
+        let root = test_root("stale-review-http");
+        fs::create_dir_all(root.join(".project/reviews/review-0001")).unwrap();
+        fs::write(
+            root.join(".project/reviews/review-0001/review.toml"),
+            "schema = \"allodium.review/v0\"\nid = \"review-0001\"\ntitle = \"Canonical review\"\nstate = \"open\"\nbase = \"main\"\nhead = \"feature\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".project/reviews/review-0001/body.md"),
+            "Canonical body",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join(".project/remotes/github/observed/reviews")).unwrap();
+        fs::write(
+            root.join(".project/remotes/github/remote.toml"),
+            "schema = \"allodium.remote/v0\"\nname = \"github\"\nkind = \"github\"\nrepository = \"owner/repo\"\noutbound = \"reconcile\"\ninbound = \"archive\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".project/remotes/github/observed/reviews/review-0001.toml"),
+            "schema = \"allodium.github.observed-review/v0\"\ncanonical_id = \"review-0001\"\nnumber = 23\nstate = \"open\"\ntitle = \"Old title\"\nurl = \"https://github.com/owner/repo/pull/23\"\nbase_ref = \"main\"\nhead_ref = \"feature\"\nbase_sha = \"base-old\"\nhead_sha = \"head-old\"\nremote_updated_at = \"2026-09-16T10:00:00Z\"\nobserved_at = \"2026-09-16T10:01:00Z\"\n",
+        )
+        .unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let server_requests = Arc::clone(&requests);
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_stop = Arc::clone(&stop);
+        let server = thread::spawn(move || {
+            while !server_stop.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(1)))
+                            .unwrap();
+                        let mut buffer = [0_u8; 8192];
+                        let size = stream.read(&mut buffer).unwrap();
+                        let request = String::from_utf8_lossy(&buffer[..size]);
+                        server_requests
+                            .lock()
+                            .unwrap()
+                            .push(request.lines().next().unwrap_or_default().to_string());
+                        let body = r#"{"number":23,"html_url":"https://github.com/owner/repo/pull/23","title":"Changed remotely","body":"Remote body","state":"open","merged_at":null,"updated_at":"2026-09-16T10:02:00Z","base":{"ref":"main","sha":"base-new"},"head":{"ref":"feature","sha":"head-new"}}"#;
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        stream.write_all(response.as_bytes()).unwrap();
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("fake GitHub server failed: {error}"),
+                }
+            }
+        });
+        let adapter = GitHubAdapter {
+            client: Client::builder().build().unwrap(),
+            repository: "owner/repo".into(),
+            token: Some("test-token".into()),
+            api_base: format!("http://{address}"),
+        };
+        let plan = GitHubPlan {
+            schema: PLAN_SCHEMA_V0.into(),
+            remote: "github".into(),
+            repository: "owner/repo".into(),
+            operations: vec![allodium_core::github::GitHubOperation {
+                canonical_id: "review-0001".into(),
+                action: "update_pull_request".into(),
+                number: Some(23),
+                fields: vec!["title".into()],
+                reason: "HTTP stale-review regression".into(),
+            }],
+        };
+        let error = adapter.apply(&root, &plan).unwrap_err();
+        assert!(error.contains("refusing stale update of review-0001"));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "stale review apply emitted extra HTTP request: {requests:?}"
+        );
+        assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/23 "));
         fs::remove_dir_all(root).unwrap();
     }
 
