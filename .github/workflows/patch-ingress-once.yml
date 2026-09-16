@@ -25,20 +25,9 @@ jobs:
 
           path = Path('crates/allodium-core/src/github.rs')
           text = path.read_text()
-          old = '''    if directory.exists() {
-              let existing_event = fs::read_to_string(&event_path)
-                  .map_err(|error| format!("{}: {error}", event_path.display()))?;
-              let existing_body = fs::read_to_string(&body_path)
-                  .map_err(|error| format!("{}: {error}", body_path.display()))?;
-              if existing_event == event_text && existing_body == comment.body {
-                  return Ok(ArchiveOutcome::Existing(directory));
-              }
-              return Err(format!(
-                  "incoming event collision at {}; existing evidence differs",
-                  directory.display()
-              ));
-          }
-          '''
+          function_start = text.index('pub fn archive_issue_comment(')
+          start = text.index('    if directory.exists() {', function_start)
+          end = text.index('    fs::create_dir_all(&directory)', start)
           new = '''    if directory.exists() {
               let existing_event_text = fs::read_to_string(&event_path)
                   .map_err(|error| format!("{}: {error}", event_path.display()))?;
@@ -67,10 +56,9 @@ jobs:
                   directory.display()
               ));
           }
+
           '''
-          if old not in text:
-              raise SystemExit('expected archive collision block not found')
-          path.write_text(text.replace(old, new, 1))
+          path.write_text(text[:start] + new + text[end:])
           PY
           cargo fmt --all
           cargo test --workspace --locked
