@@ -35,7 +35,7 @@ state = "open"
 labels = ["bug", "renderer"]
 ```
 
-The directory name and `id` must match. The prose body is separate so it remains pleasant to edit without frontmatter tooling.
+The directory name and `id` must match. `body.md` contains only the issue body; the title remains a separate canonical field and should not be repeated as a synthetic heading. Keeping prose separate makes manual editing pleasant and avoids frontmatter tooling.
 
 Future issue subobjects may include canonical notes, attachments, relationships, and explicit provenance links.
 
@@ -85,6 +85,42 @@ inbound = "archive"
   observed/   # reconstructible remote snapshot
   incoming/   # provenance-preserving remote-originated history
 ```
+
+### GitHub issue mappings
+
+```text
+.project/remotes/github/mappings/issues.toml
+```
+
+```toml
+schema = "allodium.github.issue-mappings/v0"
+
+[issues.issue-0001]
+number = 37
+url = "https://github.com/owner/repository/issues/37"
+```
+
+The mapping is not identity. `issue-0001` remains the project-owned identity; `37` is the identifier assigned by one projection authority.
+
+### GitHub observed issues
+
+The current remote observation is stored as two ordinary files:
+
+```text
+.project/remotes/github/observed/issues/
+  issue-0001.toml
+  issue-0001.body.md
+```
+
+The TOML file stores remote metadata and the Markdown file stores the exact observed GitHub body. The body is kept separately rather than embedded in TOML so a person can inspect and diff it naturally.
+
+Observed state is reconstructible. Deleting it must never destroy canonical project information.
+
+### Reconciliation plans
+
+A GitHub dry-run plan is serializable TOML using `allodium.github.plan/v0`. It contains explicit operations such as `create_issue`, `observe_issue`, and `update_issue`, their canonical IDs, relevant GitHub numbers, managed fields, and human-readable reasons.
+
+Plans are derived artifacts. They make intended remote mutations inspectable; they are not another source of truth.
 
 ### Incoming event envelope
 

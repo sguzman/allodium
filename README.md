@@ -56,10 +56,13 @@ crates/                     implementation
 
 ## Current status
 
-M0 is the format-and-invariants milestone. The repository already dogfoods the format through its own `.project/` tree and includes an initial validator CLI.
+M0 established the constitutional filesystem substrate. M1 is implementing the first GitHub issue reconciliation vertical slice.
 
 ```bash
 cargo run -p allodium-cli -- validate .
+cargo run -p allodium-cli -- github plan .
 ```
+
+`github plan` emits a serializable dry-run document. It compares canonical issue files against checked-in GitHub mappings and observations without making network calls or silently adopting remote state.
 
 See [`docs/design-principles.md`](docs/design-principles.md), [`docs/format.md`](docs/format.md), [`docs/github-projection.md`](docs/github-projection.md), and [`docs/roadmap.md`](docs/roadmap.md).

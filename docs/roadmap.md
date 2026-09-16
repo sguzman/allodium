@@ -12,7 +12,8 @@ Goal: freeze enough of the philosophy and filesystem contract that implementatio
 - [x] Define first project, issue, and remote records.
 - [x] Bootstrap validator CLI.
 - [x] Dogfood Allodium's own repository state.
-- [ ] Add tests for format loading and invalid fixtures.
+- [x] Add validator and reconciliation unit tests.
+- [ ] Add file-backed invalid fixtures.
 - [ ] Specify review, milestone, label, wiki, and release records.
 - [ ] Define versioning/migration policy before declaring v1 formats.
 
@@ -20,14 +21,16 @@ Goal: freeze enough of the philosophy and filesystem contract that implementatio
 
 Goal: one canonical issue can be projected to GitHub and externally originated issue activity can return to the repository with provenance.
 
-- GitHub authentication/configuration boundary.
-- Canonical issue create/update/close projection.
-- Stable mapping files.
-- Observe remote issue state.
-- Capture external comments.
-- Capture externally changed managed fields without silently accepting them as canonical.
-- Dry-run plan output before mutations.
-- Idempotent reconciliation tests.
+- [ ] GitHub authentication boundary.
+- [ ] Canonical issue create/update/close projection.
+- [x] Stable mapping files.
+- [x] Define exact observed issue snapshot format, including body.
+- [ ] Fetch/refresh remote issue observations through the adapter.
+- [ ] Capture external comments.
+- [ ] Capture externally changed managed fields without silently accepting them as canonical.
+- [x] Dry-run plan output before mutations.
+- [x] Idempotent reconciliation tests.
+- [ ] Apply a plan through the GitHub API.
 
 ## M2 — Reviews / pull requests
 

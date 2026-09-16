@@ -38,6 +38,26 @@ The `#37` mapping is projection state, not the issue's identity.
 
 The same issue may later map to another remote without changing canonical identity.
 
+## Managed issue body
+
+For v0, GitHub issue bodies are deterministic projections of canonical `body.md` plus a small Allodium ownership marker containing the canonical ID. The marker is projection metadata and must not be copied back into canonical prose.
+
+This means the adapter can compare the exact desired body against an observed GitHub body without pretending GitHub's wrapper text is canonical content.
+
+## Dry-run planning
+
+`allodium github plan` derives an explicit `allodium.github.plan/v0` document before any mutation is attempted.
+
+The planner currently recognizes three issue operations:
+
+- `create_issue`: canonical issue has no mapping;
+- `observe_issue`: a mapping exists but local observed state is incomplete;
+- `update_issue`: one or more managed canonical fields differ from the last observed GitHub state.
+
+An empty `operations` array is the idempotent fixed point: based on the evidence currently checked into the repository, Allodium has nothing to change.
+
+Planning is intentionally pure filesystem logic. Network observation and mutation are separate phases so a provider response cannot silently redefine desired state while the plan is being calculated.
+
 ## External edits
 
 If a collaborator edits an Allodium-managed GitHub issue directly, the adapter must not quietly treat the edit as canonical truth.

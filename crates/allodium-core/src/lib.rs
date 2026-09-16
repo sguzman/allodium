@@ -1,4 +1,6 @@
-use serde::Deserialize;
+pub mod github;
+
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,7 +8,7 @@ pub const PROJECT_SCHEMA_V0: &str = "allodium.project/v0";
 pub const ISSUE_SCHEMA_V0: &str = "allodium.issue/v0";
 pub const REMOTE_SCHEMA_V0: &str = "allodium.remote/v0";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectManifest {
     pub schema: String,
     pub id: String,
@@ -15,7 +17,7 @@ pub struct ProjectManifest {
     pub description: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IssueRecord {
     pub schema: String,
     pub id: String,
@@ -25,7 +27,14 @@ pub struct IssueRecord {
     pub labels: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalIssue {
+    pub record: IssueRecord,
+    pub body: String,
+    pub directory: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteRecord {
     pub schema: String,
     pub name: String,
@@ -49,8 +58,38 @@ impl ValidationReport {
 
 pub fn load_manifest(root: impl AsRef<Path>) -> Result<ProjectManifest, String> {
     let path = root.as_ref().join(".project/manifest.toml");
-    let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
+    read_toml(&path)
+}
+
+pub fn load_remote(root: impl AsRef<Path>, name: &str) -> Result<RemoteRecord, String> {
+    let path = root
+        .as_ref()
+        .join(".project/remotes")
+        .join(name)
+        .join("remote.toml");
+    read_toml(&path)
+}
+
+pub fn load_issues(root: impl AsRef<Path>) -> Result<Vec<CanonicalIssue>, String> {
+    let root = root.as_ref();
+    let issues_dir = root.join(".project/issues");
+    let mut issues = Vec::new();
+
+    for directory in child_directories(&issues_dir)? {
+        let record_path = directory.join("issue.toml");
+        let body_path = directory.join("body.md");
+        let record: IssueRecord = read_toml(&record_path)?;
+        let body = fs::read_to_string(&body_path)
+            .map_err(|error| format!("{}: {error}", body_path.display()))?;
+        issues.push(CanonicalIssue {
+            record,
+            body,
+            directory,
+        });
+    }
+
+    issues.sort_by(|left, right| left.record.id.cmp(&right.record.id));
+    Ok(issues)
 }
 
 pub fn validate(root: impl AsRef<Path>) -> ValidationReport {
@@ -58,108 +97,103 @@ pub fn validate(root: impl AsRef<Path>) -> ValidationReport {
     let mut report = ValidationReport::default();
 
     match load_manifest(root) {
-        Ok(manifest) => {
-            if manifest.schema != PROJECT_SCHEMA_V0 {
-                report.errors.push(format!(
-                    ".project/manifest.toml: unsupported schema {:?}; expected {:?}",
-                    manifest.schema, PROJECT_SCHEMA_V0
-                ));
-            }
-            if manifest.id.trim().is_empty() {
-                report
-                    .errors
-                    .push(".project/manifest.toml: id must not be empty".into());
-            }
-            if manifest.name.trim().is_empty() {
-                report
-                    .errors
-                    .push(".project/manifest.toml: name must not be empty".into());
+        Ok(manifest) => validate_manifest(&manifest, &mut report),
+        Err(error) => report.errors.push(error),
+    }
+
+    match load_issues(root) {
+        Ok(issues) => {
+            for issue in &issues {
+                validate_issue(issue, &mut report);
             }
         }
         Err(error) => report.errors.push(error),
     }
 
-    validate_issues(root, &mut report);
     validate_remotes(root, &mut report);
     report
 }
 
-fn validate_issues(root: &Path, report: &mut ValidationReport) {
-    let issues = root.join(".project/issues");
-    for dir in child_directories(&issues, report) {
-        let expected_id = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
-        let record_path = dir.join("issue.toml");
-        let text = match fs::read_to_string(&record_path) {
-            Ok(text) => text,
-            Err(error) => {
-                report
-                    .errors
-                    .push(format!("{}: {error}", record_path.display()));
-                continue;
-            }
-        };
-        let issue: IssueRecord = match toml::from_str(&text) {
-            Ok(issue) => issue,
-            Err(error) => {
-                report
-                    .errors
-                    .push(format!("{}: {error}", record_path.display()));
-                continue;
-            }
-        };
-        if issue.schema != ISSUE_SCHEMA_V0 {
-            report.errors.push(format!(
-                "{}: unsupported schema {:?}",
-                record_path.display(),
-                issue.schema
-            ));
-        }
-        if issue.id != expected_id {
-            report.errors.push(format!(
-                "{}: id {:?} must match directory {:?}",
-                record_path.display(),
-                issue.id,
-                expected_id
-            ));
-        }
-        if issue.title.trim().is_empty() {
-            report.errors.push(format!(
-                "{}: title must not be empty",
-                record_path.display()
-            ));
-        }
-        if !matches!(issue.state.as_str(), "open" | "closed") {
-            report.errors.push(format!(
-                "{}: state must be open or closed",
-                record_path.display()
-            ));
-        }
+fn validate_manifest(manifest: &ProjectManifest, report: &mut ValidationReport) {
+    if manifest.schema != PROJECT_SCHEMA_V0 {
+        report.errors.push(format!(
+            ".project/manifest.toml: unsupported schema {:?}; expected {:?}",
+            manifest.schema, PROJECT_SCHEMA_V0
+        ));
+    }
+    if manifest.id.trim().is_empty() {
+        report
+            .errors
+            .push(".project/manifest.toml: id must not be empty".into());
+    }
+    if manifest.name.trim().is_empty() {
+        report
+            .errors
+            .push(".project/manifest.toml: name must not be empty".into());
+    }
+}
+
+fn validate_issue(issue: &CanonicalIssue, report: &mut ValidationReport) {
+    let record_path = issue.directory.join("issue.toml");
+    let expected_id = issue
+        .directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+
+    if issue.record.schema != ISSUE_SCHEMA_V0 {
+        report.errors.push(format!(
+            "{}: unsupported schema {:?}",
+            record_path.display(),
+            issue.record.schema
+        ));
+    }
+    if issue.record.id != expected_id {
+        report.errors.push(format!(
+            "{}: id {:?} must match directory {:?}",
+            record_path.display(),
+            issue.record.id,
+            expected_id
+        ));
+    }
+    if issue.record.title.trim().is_empty() {
+        report.errors.push(format!(
+            "{}: title must not be empty",
+            record_path.display()
+        ));
+    }
+    if !matches!(issue.record.state.as_str(), "open" | "closed") {
+        report.errors.push(format!(
+            "{}: state must be open or closed",
+            record_path.display()
+        ));
     }
 }
 
 fn validate_remotes(root: &Path, report: &mut ValidationReport) {
     let remotes = root.join(".project/remotes");
-    for dir in child_directories(&remotes, report) {
-        let expected_name = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
-        let record_path = dir.join("remote.toml");
-        let text = match fs::read_to_string(&record_path) {
-            Ok(text) => text,
-            Err(error) => {
-                report
-                    .errors
-                    .push(format!("{}: {error}", record_path.display()));
-                continue;
-            }
-        };
-        let remote: RemoteRecord = match toml::from_str(&text) {
+    let directories = match child_directories(&remotes) {
+        Ok(directories) => directories,
+        Err(error) => {
+            report.errors.push(error);
+            return;
+        }
+    };
+
+    for directory in directories {
+        let expected_name = directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let record_path = directory.join("remote.toml");
+        let remote: RemoteRecord = match read_toml(&record_path) {
             Ok(remote) => remote,
             Err(error) => {
-                report
-                    .errors
-                    .push(format!("{}: {error}", record_path.display()));
+                report.errors.push(error);
                 continue;
             }
         };
+
         if remote.schema != REMOTE_SCHEMA_V0 {
             report.errors.push(format!(
                 "{}: unsupported schema {:?}",
@@ -184,25 +218,90 @@ fn validate_remotes(root: &Path, report: &mut ValidationReport) {
     }
 }
 
-fn child_directories(path: &Path, report: &mut ValidationReport) -> Vec<PathBuf> {
+fn read_toml<T>(path: &Path) -> Result<T, String>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    toml::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn child_directories(path: &Path) -> Result<Vec<PathBuf>, String> {
     if !path.exists() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let entries = match fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(error) => {
-            report.errors.push(format!("{}: {error}", path.display()));
-            return Vec::new();
-        }
-    };
-    let mut dirs = Vec::new();
+
+    let entries = fs::read_dir(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let mut directories = Vec::new();
     for entry in entries {
-        match entry {
-            Ok(entry) if entry.path().is_dir() => dirs.push(entry.path()),
-            Ok(_) => {}
-            Err(error) => report.errors.push(format!("{}: {error}", path.display())),
+        let entry = entry.map_err(|error| format!("{}: {error}", path.display()))?;
+        if entry.path().is_dir() {
+            directories.push(entry.path());
         }
     }
-    dirs.sort();
-    dirs
+    directories.sort();
+    Ok(directories)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn validator_accepts_minimal_project() {
+        let root = test_root("valid");
+        write_minimal_project(&root);
+
+        let report = validate(&root);
+        assert!(report.is_ok(), "{:?}", report.errors);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validator_rejects_issue_directory_identity_mismatch() {
+        let root = test_root("mismatch");
+        write_minimal_project(&root);
+        fs::write(
+            root.join(".project/issues/issue-0001/issue.toml"),
+            "schema = \"allodium.issue/v0\"\nid = \"issue-9999\"\ntitle = \"Test\"\nstate = \"open\"\n",
+        )
+        .unwrap();
+
+        let report = validate(&root);
+        assert!(!report.is_ok());
+        assert!(report.errors.iter().any(|error| error.contains("must match directory")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn write_minimal_project(root: &Path) {
+        fs::create_dir_all(root.join(".project/issues/issue-0001")).unwrap();
+        fs::create_dir_all(root.join(".project/remotes/github")).unwrap();
+        fs::write(
+            root.join(".project/manifest.toml"),
+            "schema = \"allodium.project/v0\"\nid = \"test\"\nname = \"Test\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".project/issues/issue-0001/issue.toml"),
+            "schema = \"allodium.issue/v0\"\nid = \"issue-0001\"\ntitle = \"Test\"\nstate = \"open\"\n",
+        )
+        .unwrap();
+        fs::write(root.join(".project/issues/issue-0001/body.md"), "Body\n").unwrap();
+        fs::write(
+            root.join(".project/remotes/github/remote.toml"),
+            "schema = \"allodium.remote/v0\"\nname = \"github\"\nkind = \"github\"\nrepository = \"owner/repo\"\noutbound = \"reconcile\"\ninbound = \"archive\"\n",
+        )
+        .unwrap();
+    }
+
+    fn test_root(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("allodium-{name}-{}-{nonce}", std::process::id()))
+    }
 }
