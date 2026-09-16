@@ -4,4 +4,4 @@ number = 3
 state = "open"
 title = "Harden M1 reconciliation and ingress edge cases"
 url = "https://github.com/sguzman/allodium/issues/3"
-observed_at = "2026-09-16T13:23:59Z"
+observed_at = "2026-09-16T13:26:17Z"
