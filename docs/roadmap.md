@@ -56,11 +56,26 @@ M2 is complete. A real canonical review was projected to GitHub PR #7, social/re
 
 ## M3 — Wiki and releases
 
-- Canonical `.project/wiki/` projection to GitHub Wiki.
-- Wiki asset strategy.
-- Canonical release records and notes.
-- Git tag/revision relationships.
-- GitHub Release projection.
+### Wiki
+
+- [x] Make the canonical `.project/wiki/` metadata/home contract executable.
+- [x] Derive a deterministic, network-free GitHub Wiki projection plan.
+- [x] Persist observed wiki branch, HEAD revision, and exact file tree.
+- [x] Guard outbound wiki writes against stale provider revisions; never force-push.
+- [x] Preserve provider-only wiki tree changes as GitHub-scoped evidence.
+- [x] Define an explicit v0 asset/path policy: top-level Markdown only, unsupported assets/nesting fail loudly.
+- [ ] Project the real Allodium canonical wiki to GitHub Wiki and re-observe idempotently.
+
+The final live wiki item is currently blocked by a GitHub bootstrap prerequisite rather than by Allodium reconciliation. GitHub does not expose the separate `allodium.wiki` Git repository until an initial page has been created on GitHub; before that initialization the repository resource is absent. Allodium deliberately does not work around this with undocumented provider endpoints.
+
+### Releases
+
+- [ ] Make canonical release records and notes executable in validation.
+- [ ] Define Git tag/revision relationship rules for the GitHub v0 adapter.
+- [ ] Add network-free GitHub Release planning plus provider-scoped mappings/observations.
+- [ ] Add GitHub Release create/update runtime with optimistic stale-state refusal.
+- [ ] Preserve provider-side managed release changes as incoming evidence.
+- [ ] Dogfood one canonical Allodium release into a real GitHub draft release and re-observe idempotently.
 
 ## M4 — Broader GitHub surface
 
