@@ -1,0 +1,5 @@
+schema = "allodium.github.review-mappings/v0"
+
+[reviews.review-0001]
+number = 7
+url = "https://github.com/sguzman/allodium/pull/7"
