@@ -87,7 +87,9 @@ fn github_plan(root: PathBuf, remote_name: &str) -> ExitCode {
     let result = allodium_core::github::plan_issues(&root, remote_name).and_then(|mut plan| {
         let review_plan = allodium_core::github::plan_reviews(&root, remote_name)?;
         if plan.remote != review_plan.remote || plan.repository != review_plan.repository {
-            return Err("issue and review projection plans disagree about the GitHub remote".into());
+            return Err(
+                "issue and review projection plans disagree about the GitHub remote".into(),
+            );
         }
         plan.operations.extend(review_plan.operations);
         Ok(plan)
