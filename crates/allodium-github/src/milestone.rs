@@ -1,10 +1,7 @@
-from pathlib import Path
-
-module = r'''use super::{GitHubAdapter, incoming_directory, now, timestamp_slug, write_toml};
+use super::{GitHubAdapter, incoming_directory, now, timestamp_slug, write_toml};
 use allodium_core::github_milestone::{
-    OBSERVED_MILESTONE_SCHEMA_V0, MilestoneMapping, ObservedMilestone,
-    load_milestone_mappings, load_observed_milestone, save_milestone_mappings,
-    write_observed_milestone_snapshot,
+    MilestoneMapping, OBSERVED_MILESTONE_SCHEMA_V0, ObservedMilestone, load_milestone_mappings,
+    load_observed_milestone, save_milestone_mappings, write_observed_milestone_snapshot,
 };
 use allodium_core::milestone::CanonicalMilestone;
 use serde::{Deserialize, Serialize};
@@ -12,8 +9,7 @@ use serde_json::json;
 use std::fs;
 use std::path::Path;
 
-const MILESTONE_CHANGE_SCHEMA_V0: &str =
-    "allodium.github.milestone-managed-change-observation/v0";
+const MILESTONE_CHANGE_SCHEMA_V0: &str = "allodium.github.milestone-managed-change-observation/v0";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct MilestoneObserveReport {
@@ -109,9 +105,7 @@ pub(super) fn apply_observe_milestone(
 ) -> Result<(), String> {
     let mappings = load_milestone_mappings(root, remote_name)?;
     let mapping = mappings.milestones.get(canonical_id).ok_or_else(|| {
-        format!(
-            "cannot observe GitHub milestone {number}: no mapping exists for {canonical_id:?}"
-        )
+        format!("cannot observe GitHub milestone {number}: no mapping exists for {canonical_id:?}")
     })?;
     if mapping.number != number {
         return Err(format!(
@@ -294,8 +288,13 @@ fn archive_managed_change_if_needed(
     };
     write_toml(directory.join("event.toml"), &event)?;
     write_toml(directory.join("before.toml"), &previous)?;
-    fs::write(directory.join("before.description.md"), previous_description)
-        .map_err(|error| format!("could not preserve previous GitHub milestone description: {error}"))?;
+    fs::write(
+        directory.join("before.description.md"),
+        previous_description,
+    )
+    .map_err(|error| {
+        format!("could not preserve previous GitHub milestone description: {error}")
+    })?;
     write_toml(directory.join("after.toml"), current)?;
     fs::write(directory.join("after.description.md"), current_description)
         .map_err(|error| format!("could not preserve new GitHub milestone description: {error}"))?;
@@ -435,15 +434,9 @@ mod tests {
             api_base: format!("http://{address}"),
         };
 
-        let error = apply_update_milestone(
-            &adapter,
-            &root,
-            "github",
-            &canonical,
-            7,
-            &["title".into()],
-        )
-        .unwrap_err();
+        let error =
+            apply_update_milestone(&adapter, &root, "github", &canonical, 7, &["title".into()])
+                .unwrap_err();
         assert!(error.contains("refusing stale update"), "{error}");
         server.join().unwrap();
         let requests = requests.lock().unwrap();
@@ -471,51 +464,3 @@ mod tests {
         }
     }
 }
-'''
-Path('crates/allodium-github/src/milestone.rs').write_text(module)
-
-lib = Path('crates/allodium-github/src/lib.rs')
-text = lib.read_text()
-if 'mod milestone;' not in text:
-    text = text.replace('mod release;\n', 'mod milestone;\nmod release;\n', 1)
-if 'use allodium_core::milestone::{CanonicalMilestone, load_milestones};' not in text:
-    text = text.replace(
-        'use allodium_core::release::{CanonicalRelease, load_releases};\n',
-        'use allodium_core::milestone::{CanonicalMilestone, load_milestones};\nuse allodium_core::release::{CanonicalRelease, load_releases};\n',
-        1,
-    )
-text = text.replace(
-    '    pub release_managed_changes_archived: usize,\n',
-    '    pub release_managed_changes_archived: usize,\n    pub milestones_observed: usize,\n    pub milestone_managed_changes_archived: usize,\n',
-    1,
-)
-text = text.replace(
-    '    pub releases_observed: usize,\n',
-    '    pub releases_observed: usize,\n    pub milestones_created: usize,\n    pub milestones_updated: usize,\n    pub milestones_observed: usize,\n',
-    1,
-)
-observe_anchor = '''        report.release_managed_changes_archived += release_report.managed_changes_archived;\n\n        for issue in self.fetch_repository_issues()? {\n'''
-observe_replacement = '''        report.release_managed_changes_archived += release_report.managed_changes_archived;\n\n        let milestone_report = milestone::observe_milestones(self, root, remote_name)?;\n        report.milestones_observed += milestone_report.observed;\n        report.milestone_managed_changes_archived += milestone_report.managed_changes_archived;\n\n        for issue in self.fetch_repository_issues()? {\n'''
-if 'milestone::observe_milestones' not in text:
-    if observe_anchor not in text:
-        raise SystemExit('observe milestone anchor not found')
-    text = text.replace(observe_anchor, observe_replacement, 1)
-load_anchor = '''        let releases = load_releases(root)?\n            .into_iter()\n            .map(|release| (release.record.id.clone(), release))\n            .collect::<BTreeMap<_, _>>();\n        let mut issue_mappings = load_mappings(root, &plan.remote)?;\n'''
-load_replacement = '''        let releases = load_releases(root)?\n            .into_iter()\n            .map(|release| (release.record.id.clone(), release))\n            .collect::<BTreeMap<_, _>>();\n        let milestones = load_milestones(root)?\n            .into_iter()\n            .map(|milestone| (milestone.record.id.clone(), milestone))\n            .collect::<BTreeMap<_, _>>();\n        let mut issue_mappings = load_mappings(root, &plan.remote)?;\n'''
-if 'let milestones = load_milestones(root)?' not in text:
-    if load_anchor not in text:
-        raise SystemExit('load milestone anchor not found')
-    text = text.replace(load_anchor, load_replacement, 1)
-match_anchor = '''                "update_release" => {\n                    let canonical = require_release(&releases, &operation.canonical_id)?;\n                    let release_id = require_number(operation)?;\n                    release::apply_update_release(\n                        self,\n                        root,\n                        &plan.remote,\n                        canonical,\n                        release_id,\n                        &operation.fields,\n                    )?;\n                    report.releases_updated += 1;\n                }\n                "observe_wiki" => {\n'''
-match_replacement = '''                "update_release" => {\n                    let canonical = require_release(&releases, &operation.canonical_id)?;\n                    let release_id = require_number(operation)?;\n                    release::apply_update_release(\n                        self,\n                        root,\n                        &plan.remote,\n                        canonical,\n                        release_id,\n                        &operation.fields,\n                    )?;\n                    report.releases_updated += 1;\n                }\n                "create_milestone" => {\n                    let canonical = require_milestone(&milestones, &operation.canonical_id)?;\n                    milestone::apply_create_milestone(self, root, &plan.remote, canonical)?;\n                    report.milestones_created += 1;\n                }\n                "observe_milestone" => {\n                    let _canonical = require_milestone(&milestones, &operation.canonical_id)?;\n                    let number = require_number(operation)?;\n                    milestone::apply_observe_milestone(\n                        self,\n                        root,\n                        &plan.remote,\n                        &operation.canonical_id,\n                        number,\n                    )?;\n                    report.milestones_observed += 1;\n                }\n                "update_milestone" => {\n                    let canonical = require_milestone(&milestones, &operation.canonical_id)?;\n                    let number = require_number(operation)?;\n                    milestone::apply_update_milestone(\n                        self,\n                        root,\n                        &plan.remote,\n                        canonical,\n                        number,\n                        &operation.fields,\n                    )?;\n                    report.milestones_updated += 1;\n                }\n                "observe_wiki" => {\n'''
-if '"create_milestone" =>' not in text:
-    if match_anchor not in text:
-        raise SystemExit('milestone apply anchor not found')
-    text = text.replace(match_anchor, match_replacement, 1)
-helper_anchor = '''fn github_token_from_environment() -> Option<String> {\n'''
-helper = '''fn require_milestone<'a>(\n    milestones: &'a BTreeMap<String, CanonicalMilestone>,\n    canonical_id: &str,\n) -> Result<&'a CanonicalMilestone, String> {\n    milestones\n        .get(canonical_id)\n        .ok_or_else(|| format!("plan references unknown canonical milestone {canonical_id:?}"))\n}\n\n'''
-if 'fn require_milestone' not in text:
-    if helper_anchor not in text:
-        raise SystemExit('milestone helper anchor not found')
-    text = text.replace(helper_anchor, helper + helper_anchor, 1)
-lib.write_text(text)

@@ -1,3 +1,4 @@
+mod milestone;
 mod release;
 mod review_ingress;
 mod wiki;
@@ -9,6 +10,7 @@ use allodium_core::github::{
     ObservedReview, PLAN_SCHEMA_V0, REVIEW_MAPPINGS_SCHEMA_V0, ReviewMapping, ReviewMappings,
     render_issue_body, render_review_body,
 };
+use allodium_core::milestone::{CanonicalMilestone, load_milestones};
 use allodium_core::release::{CanonicalRelease, load_releases};
 use allodium_core::{CanonicalIssue, CanonicalReview, load_issues, load_remote, load_reviews};
 use chrono::Utc;
@@ -45,6 +47,8 @@ pub struct ObserveReport {
     pub wiki_remote_changes_archived: usize,
     pub releases_observed: usize,
     pub release_managed_changes_archived: usize,
+    pub milestones_observed: usize,
+    pub milestone_managed_changes_archived: usize,
     pub review_conversation_comment_snapshots_archived: usize,
     pub review_submission_snapshots_archived: usize,
     pub review_inline_comment_snapshots_archived: usize,
@@ -72,6 +76,9 @@ pub struct ApplyReport {
     pub releases_created: usize,
     pub releases_updated: usize,
     pub releases_observed: usize,
+    pub milestones_created: usize,
+    pub milestones_updated: usize,
+    pub milestones_observed: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -336,6 +343,10 @@ impl GitHubAdapter {
         report.releases_observed += release_report.observed;
         report.release_managed_changes_archived += release_report.managed_changes_archived;
 
+        let milestone_report = milestone::observe_milestones(self, root, remote_name)?;
+        report.milestones_observed += milestone_report.observed;
+        report.milestone_managed_changes_archived += milestone_report.managed_changes_archived;
+
         for issue in self.fetch_repository_issues()? {
             if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
                 continue;
@@ -382,6 +393,10 @@ impl GitHubAdapter {
         let releases = load_releases(root)?
             .into_iter()
             .map(|release| (release.record.id.clone(), release))
+            .collect::<BTreeMap<_, _>>();
+        let milestones = load_milestones(root)?
+            .into_iter()
+            .map(|milestone| (milestone.record.id.clone(), milestone))
             .collect::<BTreeMap<_, _>>();
         let mut issue_mappings = load_mappings(root, &plan.remote)?;
         let mut review_mappings = load_review_mappings(root, &plan.remote)?;
@@ -556,6 +571,36 @@ impl GitHubAdapter {
                         &operation.fields,
                     )?;
                     report.releases_updated += 1;
+                }
+                "create_milestone" => {
+                    let canonical = require_milestone(&milestones, &operation.canonical_id)?;
+                    milestone::apply_create_milestone(self, root, &plan.remote, canonical)?;
+                    report.milestones_created += 1;
+                }
+                "observe_milestone" => {
+                    let _canonical = require_milestone(&milestones, &operation.canonical_id)?;
+                    let number = require_number(operation)?;
+                    milestone::apply_observe_milestone(
+                        self,
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        number,
+                    )?;
+                    report.milestones_observed += 1;
+                }
+                "update_milestone" => {
+                    let canonical = require_milestone(&milestones, &operation.canonical_id)?;
+                    let number = require_number(operation)?;
+                    milestone::apply_update_milestone(
+                        self,
+                        root,
+                        &plan.remote,
+                        canonical,
+                        number,
+                        &operation.fields,
+                    )?;
+                    report.milestones_updated += 1;
                 }
                 "observe_wiki" => {
                     let wiki_report = wiki::observe_wiki(self, root, &plan.remote)?;
@@ -783,6 +828,15 @@ fn github_api_error(status: reqwest::StatusCode, body: &str) -> String {
         );
     }
     format!("GitHub API returned {status}: {body}")
+}
+
+fn require_milestone<'a>(
+    milestones: &'a BTreeMap<String, CanonicalMilestone>,
+    canonical_id: &str,
+) -> Result<&'a CanonicalMilestone, String> {
+    milestones
+        .get(canonical_id)
+        .ok_or_else(|| format!("plan references unknown canonical milestone {canonical_id:?}"))
 }
 
 fn github_token_from_environment() -> Option<String> {
