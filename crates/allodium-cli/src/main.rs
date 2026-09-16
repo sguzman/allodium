@@ -135,7 +135,10 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
             println!("observed {} GitHub review(s)", report.reviews_observed);
             println!("observed {} GitHub wiki(s)", report.wikis_observed);
             println!("observed {} GitHub release(s)", report.releases_observed);
-            println!("observed {} GitHub milestone(s)", report.milestones_observed);
+            println!(
+                "observed {} GitHub milestone(s)",
+                report.milestones_observed
+            );
             println!(
                 "archived {} GitHub Wiki remote-tree change(s)",
                 report.wiki_remote_changes_archived
@@ -219,7 +222,10 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
             println!("observed {} GitHub release(s)", report.releases_observed);
             println!("created {} GitHub milestone(s)", report.milestones_created);
             println!("updated {} GitHub milestone(s)", report.milestones_updated);
-            println!("observed {} GitHub milestone(s)", report.milestones_observed);
+            println!(
+                "observed {} GitHub milestone(s)",
+                report.milestones_observed
+            );
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),
