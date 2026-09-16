@@ -1,0 +1,5 @@
+schema = "allodium.issue/v0"
+id = "issue-0008"
+title = "Implement GitHub milestone projection vertical slice"
+state = "open"
+labels = ["m4", "github", "milestone"]
