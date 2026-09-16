@@ -15,6 +15,10 @@ Implement the first canonical milestone projection vertical slice without making
 
 The dogfood object for this slice is `.project/milestones/milestone-0001/`. This issue is canonical Allodium state; any GitHub Issue projection is downstream.
 
+## Live dogfood notes
+
+The first live create attempt reached GitHub through the permanent Allodium sync and exposed a provider contract edge: GitHub rejected `due_on: null` with HTTP 422 (`nil is not a string`). Allodium now omits `due_on` entirely when canonical `due` is absent, while a present canonical date projects deterministically as end-of-day UTC (`YYYY-MM-DDT23:59:59Z`). The documented GitHub milestone REST contract exposes `due_on` as a timestamp string rather than a nullable field, so v0 refuses to clear an existing provider due date by emitting undocumented JSON null; that limitation remains explicit instead of being guessed around.
+
 ---
 
 **Allodium canonical ID:** `issue-0008`
