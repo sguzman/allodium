@@ -59,7 +59,10 @@ fn inspect(root: PathBuf) -> ExitCode {
 fn github(args: &[String]) -> ExitCode {
     let subcommand = args.get(1).map(String::as_str).unwrap_or("help");
     match subcommand {
-        "plan" => github_plan(root_arg(args, 2), args.get(3).map(String::as_str).unwrap_or("github")),
+        "plan" => github_plan(
+            root_arg(args, 2),
+            args.get(3).map(String::as_str).unwrap_or("github"),
+        ),
         "help" | "--help" | "-h" => {
             print_github_help();
             ExitCode::SUCCESS
