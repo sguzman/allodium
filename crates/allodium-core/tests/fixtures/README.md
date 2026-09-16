@@ -8,5 +8,7 @@ They are not generated during the test. That is deliberate: Allodium's storage c
 - `invalid-issue-id/` has an issue ID that disagrees with its directory name.
 - `invalid-issue-state/` uses an unsupported issue state.
 - `invalid-project-schema/` uses an unsupported project schema version.
+- `valid-review/` adds one canonical review with distinct base and head refs.
+- `invalid-review-same-ref/` uses the same ref for both sides of a review.
 
 When a validation rule changes, update or add a fixture that makes the filesystem-level contract explicit.

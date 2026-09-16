@@ -30,8 +30,10 @@ Required fields:
 - `id`: stable canonical review ID; must match the directory name.
 - `title`: human-facing title.
 - `state`: `open`, `merged`, or `closed`.
-- `base`: project ref/revision expression the change targets.
-- `head`: project ref/revision expression containing the proposed change.
+- `base`: non-empty project ref/revision expression the change targets.
+- `head`: non-empty project ref/revision expression containing the proposed change.
+
+`base` and `head` must differ. The canonical record identifies the intended change relationship; a provider adapter may resolve those expressions to provider-specific branch/ref objects and immutable commit identities when observing or applying a projection.
 
 `body.md` contains canonical review description prose.
 

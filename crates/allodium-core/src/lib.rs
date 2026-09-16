@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub const PROJECT_SCHEMA_V0: &str = "allodium.project/v0";
 pub const ISSUE_SCHEMA_V0: &str = "allodium.issue/v0";
+pub const REVIEW_SCHEMA_V0: &str = "allodium.review/v0";
 pub const REMOTE_SCHEMA_V0: &str = "allodium.remote/v0";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -30,6 +31,23 @@ pub struct IssueRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalIssue {
     pub record: IssueRecord,
+    pub body: String,
+    pub directory: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewRecord {
+    pub schema: String,
+    pub id: String,
+    pub title: String,
+    pub state: String,
+    pub base: String,
+    pub head: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalReview {
+    pub record: ReviewRecord,
     pub body: String,
     pub directory: PathBuf,
 }
@@ -92,6 +110,28 @@ pub fn load_issues(root: impl AsRef<Path>) -> Result<Vec<CanonicalIssue>, String
     Ok(issues)
 }
 
+pub fn load_reviews(root: impl AsRef<Path>) -> Result<Vec<CanonicalReview>, String> {
+    let root = root.as_ref();
+    let reviews_dir = root.join(".project/reviews");
+    let mut reviews = Vec::new();
+
+    for directory in child_directories(&reviews_dir)? {
+        let record_path = directory.join("review.toml");
+        let body_path = directory.join("body.md");
+        let record: ReviewRecord = read_toml(&record_path)?;
+        let body = fs::read_to_string(&body_path)
+            .map_err(|error| format!("{}: {error}", body_path.display()))?;
+        reviews.push(CanonicalReview {
+            record,
+            body,
+            directory,
+        });
+    }
+
+    reviews.sort_by(|left, right| left.record.id.cmp(&right.record.id));
+    Ok(reviews)
+}
+
 pub fn validate(root: impl AsRef<Path>) -> ValidationReport {
     let root = root.as_ref();
     let mut report = ValidationReport::default();
@@ -105,6 +145,15 @@ pub fn validate(root: impl AsRef<Path>) -> ValidationReport {
         Ok(issues) => {
             for issue in &issues {
                 validate_issue(issue, &mut report);
+            }
+        }
+        Err(error) => report.errors.push(error),
+    }
+
+    match load_reviews(root) {
+        Ok(reviews) => {
+            for review in &reviews {
+                validate_review(review, &mut report);
             }
         }
         Err(error) => report.errors.push(error),
@@ -165,6 +214,54 @@ fn validate_issue(issue: &CanonicalIssue, report: &mut ValidationReport) {
     if !matches!(issue.record.state.as_str(), "open" | "closed") {
         report.errors.push(format!(
             "{}: state must be open or closed",
+            record_path.display()
+        ));
+    }
+}
+
+fn validate_review(review: &CanonicalReview, report: &mut ValidationReport) {
+    let record_path = review.directory.join("review.toml");
+    let expected_id = review
+        .directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+
+    if review.record.schema != REVIEW_SCHEMA_V0 {
+        report.errors.push(format!(
+            "{}: unsupported schema {:?}",
+            record_path.display(),
+            review.record.schema
+        ));
+    }
+    if review.record.id != expected_id {
+        report.errors.push(format!(
+            "{}: id {:?} must match directory {:?}",
+            record_path.display(),
+            review.record.id,
+            expected_id
+        ));
+    }
+    if review.record.title.trim().is_empty() {
+        report.errors.push(format!(
+            "{}: title must not be empty",
+            record_path.display()
+        ));
+    }
+    if !matches!(review.record.state.as_str(), "open" | "merged" | "closed") {
+        report.errors.push(format!(
+            "{}: state must be open, merged, or closed",
+            record_path.display()
+        ));
+    }
+    if review.record.base.trim().is_empty() || review.record.head.trim().is_empty() {
+        report.errors.push(format!(
+            "{}: base and head are required",
+            record_path.display()
+        ));
+    } else if review.record.base == review.record.head {
+        report.errors.push(format!(
+            "{}: base and head must differ",
             record_path.display()
         ));
     }
@@ -276,6 +373,56 @@ mod tests {
                 .errors
                 .iter()
                 .any(|error| error.contains("must match directory"))
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validator_accepts_review() {
+        let root = test_root("review");
+        write_minimal_project(&root);
+        fs::create_dir_all(root.join(".project/reviews/review-0001")).unwrap();
+        fs::write(
+            root.join(".project/reviews/review-0001/review.toml"),
+            "schema = \"allodium.review/v0\"\nid = \"review-0001\"\ntitle = \"Test review\"\nstate = \"open\"\nbase = \"main\"\nhead = \"test-review\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".project/reviews/review-0001/body.md"),
+            "Review body\n",
+        )
+        .unwrap();
+
+        let report = validate(&root);
+        assert!(report.is_ok(), "{:?}", report.errors);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validator_rejects_review_with_same_base_and_head() {
+        let root = test_root("review-same-ref");
+        write_minimal_project(&root);
+        fs::create_dir_all(root.join(".project/reviews/review-0001")).unwrap();
+        fs::write(
+            root.join(".project/reviews/review-0001/review.toml"),
+            "schema = \"allodium.review/v0\"\nid = \"review-0001\"\ntitle = \"Test review\"\nstate = \"open\"\nbase = \"main\"\nhead = \"main\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".project/reviews/review-0001/body.md"),
+            "Review body\n",
+        )
+        .unwrap();
+
+        let report = validate(&root);
+        assert!(!report.is_ok());
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("base and head must differ"))
         );
 
         fs::remove_dir_all(root).unwrap();

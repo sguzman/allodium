@@ -1,0 +1,6 @@
+schema = "allodium.review/v0"
+id = "review-0001"
+title = "Fixture review"
+state = "open"
+base = "main"
+head = "fixture-review"

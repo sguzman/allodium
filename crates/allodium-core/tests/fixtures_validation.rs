@@ -48,3 +48,21 @@ fn checked_in_unknown_project_schema_is_rejected() {
             .any(|error| error.contains("unsupported schema"))
     );
 }
+
+#[test]
+fn checked_in_valid_review_fixture_is_accepted() {
+    let report = validate(fixture("valid-review"));
+    assert!(report.is_ok(), "{:?}", report.errors);
+}
+
+#[test]
+fn checked_in_review_with_same_base_and_head_is_rejected() {
+    let report = validate(fixture("invalid-review-same-ref"));
+    assert!(!report.is_ok());
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|error| error.contains("base and head must differ"))
+    );
+}
