@@ -71,6 +71,26 @@ jobs:
           text = text[:loop_start] + new_loop + text[loop_end:]
           """
           script = script[:start] + structural + script[finish:]
+
+          cli_section = script.index("cli = Path('crates/allodium-cli/src/main.rs')")
+          cli_start = script.index("anchor = '''", cli_section)
+          cli_finish_marker = "cli.write_text(cli_text.replace(anchor, replacement, 1))\n"
+          cli_finish = script.index(cli_finish_marker, cli_start) + len(cli_finish_marker)
+          cli_structural = """needle = '''            println!(
+              \"archived {} edited comment revision(s)\",
+              report.comment_edits_archived
+          );'''
+          if needle not in cli_text:
+              raise SystemExit('CLI edited-comment report line not found')
+          replacement = needle + '''
+              println!(
+                  \"archived {} comment disappearance observation(s)\",
+                  report.comment_disappearances_archived
+              );'''
+          cli.write_text(cli_text.replace(needle, replacement, 1))
+          """
+          script = script[:cli_start] + cli_structural + script[cli_finish:]
+
           exec(compile(script, 'comment-absence-patch', 'exec'))
           PY
           cargo fmt --all
