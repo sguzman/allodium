@@ -26,6 +26,7 @@ pub struct GitHubAdapter {
     client: Client,
     repository: String,
     token: Option<String>,
+    api_base: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -170,6 +171,7 @@ impl GitHubAdapter {
             client,
             repository: remote.repository,
             token: github_token_from_environment(),
+            api_base: API_BASE.into(),
         })
     }
 
@@ -413,7 +415,7 @@ impl GitHubAdapter {
     }
 
     fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, String> {
-        self.send(self.request(self.client.get(api_url(path))))
+        self.send(self.request(self.client.get(self.api_url(path))))
     }
 
     fn post<T: DeserializeOwned>(
@@ -421,7 +423,10 @@ impl GitHubAdapter {
         path: &str,
         payload: &serde_json::Value,
     ) -> Result<T, String> {
-        self.send(self.request(self.client.post(api_url(path))).json(payload))
+        self.send(
+            self.request(self.client.post(self.api_url(path)))
+                .json(payload),
+        )
     }
 
     fn patch<T: DeserializeOwned>(
@@ -429,7 +434,14 @@ impl GitHubAdapter {
         path: &str,
         payload: &serde_json::Value,
     ) -> Result<T, String> {
-        self.send(self.request(self.client.patch(api_url(path))).json(payload))
+        self.send(
+            self.request(self.client.patch(self.api_url(path)))
+                .json(payload),
+        )
+    }
+
+    fn api_url(&self, path: &str) -> String {
+        format!("{}{}", self.api_base.trim_end_matches('/'), path)
     }
 
     fn request(&self, request: RequestBuilder) -> RequestBuilder {
@@ -475,10 +487,6 @@ fn github_token_from_environment() -> Option<String> {
     ["ALLODIUM_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
         .into_iter()
         .find_map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
-}
-
-fn api_url(path: &str) -> String {
-    format!("{API_BASE}{path}")
 }
 
 fn now() -> String {
@@ -1060,6 +1068,108 @@ mod tests {
         let text = fs::read_to_string(event).unwrap();
         assert!(text.contains("kind = \"issue.unmapped.observed\""));
         assert!(text.contains("remote_object_id = \"44\""));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_update_is_rejected_before_patch_is_sent() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use std::time::Duration;
+
+        let root = test_root("stale-http");
+        fs::create_dir_all(root.join(".project/issues/issue-0007")).unwrap();
+        fs::write(
+            root.join(".project/issues/issue-0007/issue.toml"),
+            "schema = \"allodium.issue/v0\"\nid = \"issue-0007\"\ntitle = \"Canonical title\"\nstate = \"open\"\nlabels = []\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".project/issues/issue-0007/body.md"),
+            "Canonical body",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join(".project/remotes/github/observed/issues")).unwrap();
+        fs::write(
+            root.join(".project/remotes/github/remote.toml"),
+            "schema = \"allodium.remote/v0\"\nname = \"github\"\nkind = \"github\"\nrepository = \"owner/repo\"\noutbound = \"reconcile\"\ninbound = \"archive\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".project/remotes/github/observed/issues/issue-0007.revision.toml"),
+            "schema = \"allodium.github.observed-revision/v0\"\ncanonical_id = \"issue-0007\"\nnumber = 7\nremote_updated_at = \"2026-09-16T10:00:00Z\"\nobserved_at = \"2026-09-16T10:01:00Z\"\n",
+        )
+        .unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let server_requests = Arc::clone(&requests);
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_stop = Arc::clone(&stop);
+        let server = thread::spawn(move || {
+            while !server_stop.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(1)))
+                            .unwrap();
+                        let mut buffer = [0_u8; 8192];
+                        let size = stream.read(&mut buffer).unwrap();
+                        let request = String::from_utf8_lossy(&buffer[..size]);
+                        let request_line = request.lines().next().unwrap_or_default().to_string();
+                        server_requests.lock().unwrap().push(request_line);
+                        let body = r#"{"number":7,"html_url":"https://github.com/owner/repo/issues/7","title":"Changed remotely","body":"Remote body","state":"open","updated_at":"2026-09-16T10:02:00Z"}"#;
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        stream.write_all(response.as_bytes()).unwrap();
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("fake GitHub server failed: {error}"),
+                }
+            }
+        });
+
+        let adapter = GitHubAdapter {
+            client: Client::builder().build().unwrap(),
+            repository: "owner/repo".into(),
+            token: Some("test-token".into()),
+            api_base: format!("http://{address}"),
+        };
+        let plan = GitHubPlan {
+            schema: PLAN_SCHEMA_V0.into(),
+            remote: "github".into(),
+            repository: "owner/repo".into(),
+            operations: vec![allodium_core::github::GitHubOperation {
+                canonical_id: "issue-0007".into(),
+                action: "update_issue".into(),
+                number: Some(7),
+                fields: vec!["title".into()],
+                reason: "HTTP stale-write regression".into(),
+            }],
+        };
+
+        let error = adapter.apply(&root, &plan).unwrap_err();
+        assert!(error.contains("refusing stale update of issue-0007"));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "stale apply emitted an unexpected second HTTP request: {requests:?}"
+        );
+        assert!(requests[0].starts_with("GET /repos/owner/repo/issues/7 "));
 
         fs::remove_dir_all(root).unwrap();
     }
