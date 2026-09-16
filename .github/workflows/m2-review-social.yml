@@ -25,7 +25,9 @@ jobs:
       - name: Apply review social ingress patch
         run: python3 .github/allodium-m2-review-social.py
       - name: Format
-        run: cargo fmt --all -- --check
+        run: |
+          cargo fmt --all
+          cargo fmt --all -- --check
       - name: Test
         run: cargo test --locked --workspace
       - name: Validate Allodium state
