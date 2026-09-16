@@ -204,7 +204,10 @@ mod tests {
         fs::write(
             root.join(".project/wiki/wiki.toml"),
             format!(
-                "schema = \\"allodium.wiki/v0\\"\\ntitle = \\"Test Wiki\\"\\nhome = \\"{home}\\"\\n"
+                r#"schema = "allodium.wiki/v0"
+title = "Test Wiki"
+home = "{home}"
+"#
             ),
         )
         .unwrap();
@@ -224,18 +227,31 @@ mod tests {
         fs::create_dir_all(root.join(".project/remotes/github")).unwrap();
         fs::write(
             root.join(".project/manifest.toml"),
-            "schema = \\"allodium.project/v0\\"\\nid = \\"test\\"\\nname = \\"Test\\"\\n",
+            r#"schema = "allodium.project/v0"
+id = "test"
+name = "Test"
+"#,
         )
         .unwrap();
         fs::write(
             root.join(".project/issues/issue-0001/issue.toml"),
-            "schema = \\"allodium.issue/v0\\"\\nid = \\"issue-0001\\"\\ntitle = \\"Test\\"\\nstate = \\"open\\"\\n",
+            r#"schema = "allodium.issue/v0"
+id = "issue-0001"
+title = "Test"
+state = "open"
+"#,
         )
         .unwrap();
-        fs::write(root.join(".project/issues/issue-0001/body.md"), "Body\\n").unwrap();
+        fs::write(root.join(".project/issues/issue-0001/body.md"), "Body\n").unwrap();
         fs::write(
             root.join(".project/remotes/github/remote.toml"),
-            "schema = \\"allodium.remote/v0\\"\\nname = \\"github\\"\\nkind = \\"github\\"\\nrepository = \\"owner/repo\\"\\noutbound = \\"reconcile\\"\\ninbound = \\"archive\\"\\n",
+            r#"schema = "allodium.remote/v0"
+name = "github"
+kind = "github"
+repository = "owner/repo"
+outbound = "reconcile"
+inbound = "archive"
+"#,
         )
         .unwrap();
         root
