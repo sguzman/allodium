@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/m4-milestone-runtime-patch.py'
+      - '.github/m4-milestone-runtime-normalize.py'
       - '.github/workflows/m4-milestone-runtime.yml'
   workflow_dispatch:
 
@@ -23,7 +24,9 @@ jobs:
           toolchain: '1.85'
           components: rustfmt
       - name: Apply milestone runtime patch
-        run: python .github/m4-milestone-runtime-patch.py
+        run: |
+          python .github/m4-milestone-runtime-patch.py
+          python .github/m4-milestone-runtime-normalize.py
       - name: Format
         run: |
           cargo fmt --all
@@ -40,6 +43,7 @@ jobs:
       - name: Publish and self-clean
         run: |
           rm .github/m4-milestone-runtime-patch.py
+          rm .github/m4-milestone-runtime-normalize.py
           rm .github/workflows/m4-milestone-runtime.yml
           git config user.name 'Allodium implementation gate'
           git config user.email 'actions@users.noreply.github.com'
