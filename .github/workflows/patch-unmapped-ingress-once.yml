@@ -23,32 +23,35 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def replace_once(text, old, new, label):
-              if old not in text:
-                  raise SystemExit(f'{label}: patch anchor not found')
-              return text.replace(old, new, 1)
-
           path = Path('crates/allodium-github/src/lib.rs')
           text = path.read_text()
-          text = replace_once(
-              text,
+
+          def require(anchor, label, start=0):
+              pos = text.find(anchor, start)
+              if pos < 0:
+                  raise SystemExit(f'{label}: patch anchor not found')
+              return pos
+
+          # Imports / report / provider-specific wire records.
+          text = text.replace(
               'use std::collections::BTreeMap;',
               'use std::collections::{BTreeMap, BTreeSet};',
-              'collections import',
+              1,
           )
-          text = replace_once(
-              text,
+          text = text.replace(
               'const MANAGED_CHANGE_SCHEMA_V0: &str = "allodium.github.managed-change-observation/v0";\n',
-              'const MANAGED_CHANGE_SCHEMA_V0: &str = "allodium.github.managed-change-observation/v0";\nconst UNMAPPED_ISSUE_SCHEMA_V0: &str = "allodium.github.unmapped-issue-observation/v0";\n',
-              'unmapped schema constant',
+              'const MANAGED_CHANGE_SCHEMA_V0: &str = "allodium.github.managed-change-observation/v0";\n'
+              'const UNMAPPED_ISSUE_SCHEMA_V0: &str = "allodium.github.unmapped-issue-observation/v0";\n',
+              1,
           )
-          text = replace_once(
-              text,
+          text = text.replace(
               '    pub managed_changes_archived: usize,\n}',
               '    pub managed_changes_archived: usize,\n    pub unmapped_issues_archived: usize,\n}',
-              'observe report',
+              1,
           )
-          marker = '''#[derive(Debug, Clone, Deserialize)]\nstruct ApiIssue {'''
+
+          marker = '#[derive(Debug, Clone, Deserialize)]\nstruct ApiIssue {'
+          require(marker, 'repository issue structs')
           addition = '''#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
           struct UnmappedIssueObservation {
               schema: String,
@@ -78,49 +81,42 @@ jobs:
           }
 
           '''
-          text = replace_once(text, marker, addition + marker, 'repository issue structs')
+          text = text.replace(marker, addition + marker, 1)
 
-          old = '''        let mappings = load_mappings(root, remote_name)?;
-              let mut report = ObserveReport::default();
+          # Insert mapped-number set immediately after the observe() mapping load.
+          observe_start = require('    pub fn observe(', 'observe function')
+          anchor = '        let mappings = load_mappings(root, remote_name)?;\n'
+          pos = require(anchor, 'observe mappings', observe_start) + len(anchor)
+          mapped = '''        let mapped_numbers = mappings
+              .issues
+              .values()
+              .map(|mapping| mapping.number)
+              .collect::<BTreeSet<_>>();
+          '''
+          text = text[:pos] + mapped + text[pos:]
 
-              for (canonical_id, mapping) in mappings.issues {'''
-          new = '''        let mappings = load_mappings(root, remote_name)?;
-              let mapped_numbers = mappings
-                  .issues
-                  .values()
-                  .map(|mapping| mapping.number)
-                  .collect::<BTreeSet<_>>();
-              let mut report = ObserveReport::default();
-
-              for (canonical_id, mapping) in mappings.issues {'''
-          text = replace_once(text, old, new, 'mapped number collection')
-
-          old = '''            }
+          # Add repository-wide discovery before observe() returns.
+          apply_marker = '\n    pub fn apply(&self,'
+          apply_pos = require(apply_marker, 'apply function', observe_start)
+          return_anchor = '        Ok(report)\n    }'
+          return_pos = text.rfind(return_anchor, observe_start, apply_pos)
+          if return_pos < 0:
+              raise SystemExit('observe return: patch anchor not found')
+          discovery = '''        for issue in self.fetch_repository_issues()? {
+              if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
+                  continue;
               }
-
-              Ok(report)
+              if archive_unmapped_issue_observation(root, remote_name, &issue, &now())? {
+                  report.unmapped_issues_archived += 1;
+              }
           }
 
-          pub fn apply'''
-          new = '''            }
-              }
+          '''
+          text = text[:return_pos] + discovery + text[return_pos:]
 
-              for issue in self.fetch_repository_issues()? {
-                  if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
-                      continue;
-                  }
-                  if archive_unmapped_issue_observation(root, remote_name, &issue, &now())? {
-                      report.unmapped_issues_archived += 1;
-                  }
-              }
-
-              Ok(report)
-          }
-
-          pub fn apply'''
-          text = replace_once(text, old, new, 'unmapped discovery loop')
-
-          marker = '''    fn create_issue(&self, issue: &CanonicalIssue) -> Result<ApiIssue, String> {'''
+          # Repository issue listing. GitHub's issue list includes PRs, filtered above.
+          marker = '    fn create_issue(&self, issue: &CanonicalIssue) -> Result<ApiIssue, String> {'
+          require(marker, 'repository issue fetch')
           method = '''    fn fetch_repository_issues(&self) -> Result<Vec<ApiRepositoryIssue>, String> {
               let mut page = 1;
               let mut issues = Vec::new();
@@ -140,9 +136,12 @@ jobs:
           }
 
           '''
-          text = replace_once(text, marker, method + marker, 'repository issue fetch')
+          text = text.replace(marker, method + marker, 1)
 
-          marker = '''fn archive_managed_change_if_needed('''
+          # Provider-scoped append-only archive. The provider revision timestamp is
+          # part of identity; local observed_at deliberately is not.
+          marker = 'fn archive_managed_change_if_needed('
+          require(marker, 'unmapped archive function')
           function = '''fn archive_unmapped_issue_observation(
               root: &Path,
               remote_name: &str,
@@ -154,8 +153,6 @@ jobs:
                   issue.number,
                   timestamp_slug(&issue.updated_at)
               );
-              // Use the provider revision timestamp for the directory bucket so repeatedly
-              // observing the same remote revision remains idempotent across local poll dates.
               let directory = incoming_directory(root, remote_name, &issue.updated_at, &event_id)?;
               let event = UnmappedIssueObservation {
                   schema: UNMAPPED_ISSUE_SCHEMA_V0.into(),
@@ -218,9 +215,12 @@ jobs:
           }
 
           '''
-          text = replace_once(text, marker, function + marker, 'unmapped archive function')
+          text = text.replace(marker, function + marker, 1)
 
-          marker = '''    fn test_root(name: &str) -> PathBuf {'''
+          # Regression: same provider revision survives polls on different dates,
+          # and archival never creates canonical project state.
+          marker = '    fn test_root(name: &str) -> PathBuf {'
+          require(marker, 'unmapped ingress test')
           test = '''    #[test]
               fn unmapped_issue_revision_is_provider_scoped_and_idempotent() {
                   let root = test_root("unmapped");
@@ -265,25 +265,29 @@ jobs:
               }
 
           '''
-          text = replace_once(text, marker, test + marker, 'unmapped ingress test')
+          text = text.replace(marker, test + marker, 1)
           path.write_text(text)
 
           cli = Path('crates/allodium-cli/src/main.rs')
-          text = cli.read_text()
-          old = '''            println!(
+          cli_text = cli.read_text()
+          anchor = '''            println!(
                           "archived {} managed-field remote change(s)",
                           report.managed_changes_archived
                       );'''
-          new = '''            println!(
-                          "archived {} managed-field remote change(s)",
-                          report.managed_changes_archived
-                      );
+          if anchor not in cli_text:
+              # Match actual rustfmt indentation without relying on the workflow's YAML indentation.
+              anchor = '''            println!(
+                  "archived {} managed-field remote change(s)",
+                  report.managed_changes_archived
+              );'''
+          if anchor not in cli_text:
+              raise SystemExit('CLI observe report: patch anchor not found')
+          addition = anchor + '''
                       println!(
                           "archived {} unmapped GitHub issue revision(s)",
                           report.unmapped_issues_archived
                       );'''
-          text = replace_once(text, old, new, 'CLI observe report')
-          cli.write_text(text)
+          cli.write_text(cli_text.replace(anchor, addition, 1))
           PY
           cargo fmt --all
           cargo test --workspace --locked
