@@ -1,6 +1,6 @@
 # Filesystem format v0
 
-This document defines the first experimental Allodium layout. `v0` is intentionally allowed to change while M0 is active.
+This document defines the first experimental Allodium layout. `v0` remains explicitly versioned even while it is experimental. Schema evolution and migration rules are normative in `format-versioning.md`; the v0 records for reviews, milestones, labels, wiki metadata, and releases are normative in `canonical-object-records-v0.md`.
 
 ## Project manifest
 
@@ -43,7 +43,7 @@ Future issue subobjects may include canonical notes, attachments, relationships,
 
 The canonical concept is a `review`, not a GitHub Pull Request or GitLab Merge Request.
 
-Planned layout:
+The v0 review record is specified in `canonical-object-records-v0.md` and uses ordinary files:
 
 ```text
 .project/reviews/review-0001/
@@ -51,11 +51,15 @@ Planned layout:
   body.md
 ```
 
-A review will identify a base and head revision/ref plus canonical review state. GitHub may project it as a pull request while another forge may project the same canonical object differently.
+A review identifies project-owned base/head refs or revisions plus canonical review state. GitHub may project it as a pull request while another forge may project the same canonical object differently.
+
+## Milestones, labels, wiki, and releases
+
+The canonical v0 layouts and fields for milestones, labels, wiki metadata/content, and releases are specified in `canonical-object-records-v0.md`. Provider-assigned numbers, IDs, URLs, and remote asset metadata never become canonical identity merely because an adapter projects these objects.
 
 ## Wiki
 
-Canonical wiki content lives under `.project/wiki/` as ordinary Markdown and assets. The GitHub adapter will project that content into the repository's GitHub Wiki Git repository or another supported GitHub-facing representation.
+Canonical wiki content lives under `.project/wiki/` as ordinary Markdown and assets. The GitHub adapter may project that content into the repository's GitHub Wiki Git repository or another supported GitHub-facing representation.
 
 The canonical wiki never lives only in `project.wiki.git`.
 
@@ -104,27 +108,28 @@ The mapping is not identity. `issue-0001` remains the project-owned identity; `3
 
 ### GitHub observed issues
 
-The current remote observation is stored as two ordinary files:
+The current remote observation is stored as ordinary files:
 
 ```text
 .project/remotes/github/observed/issues/
   issue-0001.toml
   issue-0001.body.md
+  issue-0001.revision.toml
 ```
 
-The TOML file stores remote metadata and the Markdown file stores the exact observed GitHub body. The body is kept separately rather than embedded in TOML so a person can inspect and diff it naturally.
+The metadata file stores observed remote fields, the Markdown file stores the exact observed GitHub body, and the revision file stores the provider revision used for optimistic stale-write protection. Prose remains separate so a person can inspect and diff it naturally.
 
 Observed state is reconstructible. Deleting it must never destroy canonical project information.
 
 ### Reconciliation plans
 
-A GitHub dry-run plan is serializable TOML using `allodium.github.plan/v0`. It contains explicit operations such as `create_issue`, `observe_issue`, and `update_issue`, their canonical IDs, relevant GitHub numbers, managed fields, and human-readable reasons.
+A GitHub dry-run plan is serializable TOML using `allodium.github.plan/v0`. It contains explicit operations such as `create_issue` and `update_issue`, their canonical IDs, relevant GitHub numbers, managed fields, and human-readable reasons.
 
 Plans are derived artifacts. They make intended remote mutations inspectable; they are not another source of truth.
 
 ### Incoming event envelope
 
-Planned normalized event representation:
+Normalized incoming evidence is stored as ordinary files:
 
 ```text
 incoming/2026/09/<event-id>/
@@ -137,7 +142,7 @@ Example `event.toml`:
 
 ```toml
 schema = "allodium.incoming-event/v0"
-id = "github-event-01K..."
+id = "github-issue-comment-98214321-created"
 remote = "github"
 kind = "issue.comment.created"
 observed_at = "2026-09-16T12:00:00Z"
@@ -152,12 +157,14 @@ remote_id = "284928"
 login = "some-user"
 
 [source]
-remote_event_id = "98214321"
+remote_object_type = "issue_comment"
+remote_object_id = "98214321"
 created_at = "2026-09-16T11:59:55Z"
+updated_at = "2026-09-16T11:59:55Z"
 url = "https://github.com/owner/repository/issues/37#issuecomment-98214321"
 ```
 
-Provider identity remains provider-scoped. Matching usernames on two forges are not assumed to denote the same person.
+Provider identity remains provider-scoped. Matching usernames on two forges are not assumed to denote the same person. Evidence semantics, including unmapped issues and comments no longer observed, are specified in `ingress-and-provenance.md`.
 
 ## Canonical versus reconstructible
 
@@ -169,3 +176,9 @@ A file being checked into the repository does not automatically make it canonica
 - reconstructible: mappings/observations/caches that can be rebuilt.
 
 All of them remain ordinary user-editable files. The distinction governs reconciliation semantics, not filesystem permissions.
+
+## Versioning and migrations
+
+Structured records identify their own schema versions inside the ordinary file. Unknown semantic versions fail closed. Reading, validation, observation, planning, and projection do not implicitly migrate canonical state.
+
+A migration is an explicit, reviewable filesystem mutation. See `format-versioning.md` for the complete policy.

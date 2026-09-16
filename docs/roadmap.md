@@ -13,9 +13,11 @@ Goal: freeze enough of the philosophy and filesystem contract that implementatio
 - [x] Bootstrap validator CLI.
 - [x] Dogfood Allodium's own repository state.
 - [x] Add validator and reconciliation unit tests.
-- [ ] Add file-backed invalid fixtures.
-- [ ] Specify review, milestone, label, wiki, and release records.
-- [ ] Define versioning/migration policy before declaring v1 formats.
+- [x] Add file-backed valid and invalid fixtures.
+- [x] Specify review, milestone, label, wiki, and release records.
+- [x] Define versioning/migration policy before declaring v1 formats.
+
+M0 is complete. The filesystem contract has executable checked-in fixtures, explicit schema-evolution rules, and forge-neutral v0 records for the next canonical object families.
 
 ## M1 — GitHub issues vertical slice
 

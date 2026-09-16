@@ -1,5 +1,5 @@
 schema = "allodium.issue/v0"
 id = "issue-0004"
 title = "Complete M0 filesystem substrate"
-state = "open"
+state = "closed"
 labels = ["m0", "format"]
