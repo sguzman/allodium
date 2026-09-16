@@ -1,0 +1,10 @@
+schema = "allodium.github.observed-release/v0"
+canonical_id = "release-0001"
+id = 390189282
+url = "https://github.com/sguzman/allodium/releases/tag/untagged-a3bf84ba9e3703ed9ff8"
+name = "Allodium M3 dogfood"
+tag_name = "v0.0.0-m3-dogfood"
+commit_sha = "33d9e4b4d0199bfa29deb7bafa34fd82a486ca36"
+draft = true
+prerelease = false
+observed_at = "2026-09-16T18:57:21Z"

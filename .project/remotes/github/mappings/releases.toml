@@ -1,0 +1,6 @@
+schema = "allodium.github.release-mappings/v0"
+
+[releases.release-0001]
+id = 390189282
+url = "https://github.com/sguzman/allodium/releases/tag/untagged-a3bf84ba9e3703ed9ff8"
+tag = "v0.0.0-m3-dogfood"
