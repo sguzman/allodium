@@ -9,7 +9,7 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,7 @@ const API_VERSION: &str = "2022-11-28";
 const OBSERVED_REVISION_SCHEMA_V0: &str = "allodium.github.observed-revision/v0";
 const OBSERVED_COMMENT_SCHEMA_V0: &str = "allodium.github.observed-comment/v0";
 const MANAGED_CHANGE_SCHEMA_V0: &str = "allodium.github.managed-change-observation/v0";
+const UNMAPPED_ISSUE_SCHEMA_V0: &str = "allodium.github.unmapped-issue-observation/v0";
 
 #[derive(Debug, Clone)]
 pub struct GitHubAdapter {
@@ -33,6 +34,7 @@ pub struct ObserveReport {
     pub comments_archived: usize,
     pub comment_edits_archived: usize,
     pub managed_changes_archived: usize,
+    pub unmapped_issues_archived: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -83,6 +85,34 @@ struct ManagedChangeSource {
     remote_object_id: String,
     url: String,
     remote_updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct UnmappedIssueObservation {
+    schema: String,
+    id: String,
+    remote: String,
+    kind: String,
+    observed_at: String,
+    evidence: String,
+    title: String,
+    state: String,
+    actor: IncomingActor,
+    source: IncomingSource,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ApiRepositoryIssue {
+    number: u64,
+    html_url: String,
+    title: String,
+    body: Option<String>,
+    state: String,
+    user: ApiUser,
+    created_at: String,
+    updated_at: String,
+    #[serde(default)]
+    pull_request: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -150,6 +180,11 @@ impl GitHubAdapter {
     ) -> Result<ObserveReport, String> {
         let root = root.as_ref();
         let mappings = load_mappings(root, remote_name)?;
+        let mapped_numbers = mappings
+            .issues
+            .values()
+            .map(|mapping| mapping.number)
+            .collect::<BTreeSet<_>>();
         let mut report = ObserveReport::default();
 
         for (canonical_id, mapping) in mappings.issues {
@@ -178,6 +213,15 @@ impl GitHubAdapter {
                     CommentArchive::Edited => report.comment_edits_archived += 1,
                     CommentArchive::Unchanged => {}
                 }
+            }
+        }
+
+        for issue in self.fetch_repository_issues()? {
+            if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
+                continue;
+            }
+            if archive_unmapped_issue_observation(root, remote_name, &issue, &now())? {
+                report.unmapped_issues_archived += 1;
             }
         }
 
@@ -310,6 +354,24 @@ impl GitHubAdapter {
             page += 1;
         }
         Ok(comments)
+    }
+
+    fn fetch_repository_issues(&self) -> Result<Vec<ApiRepositoryIssue>, String> {
+        let mut page = 1;
+        let mut issues = Vec::new();
+        loop {
+            let batch: Vec<ApiRepositoryIssue> = self.get(&format!(
+                "/repos/{}/issues?state=all&per_page=100&page={page}",
+                self.repository
+            ))?;
+            let count = batch.len();
+            issues.extend(batch);
+            if count < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(issues)
     }
 
     fn create_issue(&self, issue: &CanonicalIssue) -> Result<ApiIssue, String> {
@@ -518,6 +580,76 @@ fn load_revision(
         return Err(format!("{}: unsupported revision schema", path.display()));
     }
     Ok(Some(revision))
+}
+
+fn archive_unmapped_issue_observation(
+    root: &Path,
+    remote_name: &str,
+    issue: &ApiRepositoryIssue,
+    observed_at: &str,
+) -> Result<bool, String> {
+    let event_id = format!(
+        "{remote_name}-issue-{}-unmapped-{}",
+        issue.number,
+        timestamp_slug(&issue.updated_at)
+    );
+    let directory = incoming_directory(root, remote_name, &issue.updated_at, &event_id)?;
+    let event = UnmappedIssueObservation {
+        schema: UNMAPPED_ISSUE_SCHEMA_V0.into(),
+        id: event_id,
+        remote: remote_name.into(),
+        kind: "issue.unmapped.observed".into(),
+        observed_at: observed_at.into(),
+        evidence: "GitHub REST issue observation has no canonical Allodium mapping; archived as provider-scoped evidence only. No canonical issue or mapping was created.".into(),
+        title: issue.title.clone(),
+        state: issue.state.clone(),
+        actor: IncomingActor {
+            remote_id: issue.user.id.to_string(),
+            login: issue.user.login.clone(),
+        },
+        source: IncomingSource {
+            remote_object_type: "issue".into(),
+            remote_object_id: issue.number.to_string(),
+            url: issue.html_url.clone(),
+            created_at: Some(issue.created_at.clone()),
+            updated_at: Some(issue.updated_at.clone()),
+        },
+    };
+    let event_path = directory.join("event.toml");
+    let body_path = directory.join("body.md");
+    let event_text = toml::to_string_pretty(&event)
+        .map_err(|error| format!("could not serialize unmapped GitHub issue: {error}"))?;
+    let body = issue.body.as_deref().unwrap_or_default();
+
+    if directory.exists() {
+        let existing_event_text = fs::read_to_string(&event_path)
+            .map_err(|error| format!("{}: {error}", event_path.display()))?;
+        let existing_event: UnmappedIssueObservation = toml::from_str(&existing_event_text)
+            .map_err(|error| format!("{}: {error}", event_path.display()))?;
+        let existing_body = fs::read_to_string(&body_path)
+            .map_err(|error| format!("{}: {error}", body_path.display()))?;
+        let same_revision = existing_event.schema == event.schema
+            && existing_event.id == event.id
+            && existing_event.remote == event.remote
+            && existing_event.kind == event.kind
+            && existing_event.title == event.title
+            && existing_event.state == event.state
+            && existing_event.actor == event.actor
+            && existing_event.source == event.source;
+        if same_revision && existing_body == body {
+            return Ok(false);
+        }
+        return Err(format!(
+            "unmapped GitHub issue observation collision at {}; provider revision identity points to different evidence",
+            directory.display()
+        ));
+    }
+
+    fs::create_dir_all(&directory).map_err(|error| format!("{}: {error}", directory.display()))?;
+    fs::write(&event_path, event_text)
+        .map_err(|error| format!("{}: {error}", event_path.display()))?;
+    fs::write(&body_path, body).map_err(|error| format!("{}: {error}", body_path.display()))?;
+    Ok(true)
 }
 
 fn archive_managed_change_if_needed(
@@ -891,6 +1023,43 @@ mod tests {
             .path();
         assert!(event_dir.join("before.body.md").exists());
         assert!(event_dir.join("after.body.md").exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unmapped_issue_revision_is_provider_scoped_and_idempotent() {
+        let root = test_root("unmapped");
+        let issue = ApiRepositoryIssue {
+            number: 44,
+            html_url: "https://github.com/owner/repo/issues/44".into(),
+            title: "External issue".into(),
+            body: Some("Remote-only body".into()),
+            state: "open".into(),
+            user: ApiUser {
+                id: 9,
+                login: "outside-user".into(),
+            },
+            created_at: "2026-09-16T10:00:00Z".into(),
+            updated_at: "2026-09-16T10:05:00Z".into(),
+            pull_request: None,
+        };
+
+        assert!(
+            archive_unmapped_issue_observation(&root, "github", &issue, "2026-09-16T11:00:00Z",)
+                .unwrap()
+        );
+        assert!(
+            !archive_unmapped_issue_observation(&root, "github", &issue, "2026-09-17T11:00:00Z",)
+                .unwrap()
+        );
+        assert!(!root.join(".project/issues").exists());
+        let event = root.join(
+            ".project/remotes/github/incoming/2026/09/github-issue-44-unmapped-2026-09-16T10-05-00Z/event.toml",
+        );
+        let text = fs::read_to_string(event).unwrap();
+        assert!(text.contains("kind = \"issue.unmapped.observed\""));
+        assert!(text.contains("remote_object_id = \"44\""));
 
         fs::remove_dir_all(root).unwrap();
     }

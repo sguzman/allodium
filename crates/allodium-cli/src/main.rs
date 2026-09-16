@@ -110,6 +110,10 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
                 "archived {} managed-field remote change(s)",
                 report.managed_changes_archived
             );
+            println!(
+                "archived {} unmapped GitHub issue revision(s)",
+                report.unmapped_issues_archived
+            );
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),
