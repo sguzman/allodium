@@ -1,0 +1,6 @@
+schema = "allodium.github.observed-projects-capabilities/v0"
+credential_available = false
+authenticated = false
+owner_kind = "user"
+owner = "sguzman"
+observed_at = "2026-09-17T20:01:48Z"
