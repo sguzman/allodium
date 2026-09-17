@@ -21,3 +21,12 @@ Provider-created DraftIssue items are not canonicalized by this mapping layer. F
 ## Current mutation boundary
 
 This increment is identity/planning only. The planner can distinguish managed creation, binding an explicitly numbered existing Project, missing observation, content identity prerequisites, item/field/option/view mapping gaps, and identity disagreement. All such work still emits the non-mutating `projects_runtime_required` boundary. No ProjectV2 deletion is planned, and canonical absence has no provider deletion meaning yet.
+
+
+## Read-only provider observation
+
+When the separately configured Projects credential authenticates the explicit owner, Allodium may observe an explicitly numbered existing Project or a Project already bound by stable node ID. The v0 observer persists normalized provider snapshots for project metadata, fields, single-select options, iterations, views, items, supported field values, and Issue/PullRequest/DraftIssue content. Provider DraftIssue content remains provider evidence and is never promoted into `.project/issues/`.
+
+A changed provider snapshot archives both the previous and current observations under the GitHub remote `incoming/` namespace before the current observation is replaced. Re-observing semantically identical state is idempotent. Project connections are capped at 100 objects in v0; if GitHub reports another page, observation fails rather than silently persisting a truncated snapshot.
+
+Ordinary mapped issue and pull-request observations also persist their GitHub GraphQL node IDs when those canonical objects belong to an enabled Allodium board. This supplies the stable content identity required for later ProjectV2 item membership without requiring Project authorization merely to learn repository-object identity.

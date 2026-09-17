@@ -5,6 +5,7 @@ pub mod github_discussion;
 pub mod github_label;
 pub mod github_milestone;
 pub mod github_project;
+pub mod github_project_observation;
 pub mod github_release;
 pub mod github_wiki;
 pub mod label;

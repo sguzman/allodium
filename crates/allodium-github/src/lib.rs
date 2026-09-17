@@ -61,6 +61,10 @@ pub struct ObserveReport {
     pub discussion_managed_changes_archived: usize,
     pub discussion_social_snapshots_archived: usize,
     pub projects_capabilities_observed: usize,
+    pub projects_observed: usize,
+    pub projects_provider_changes_archived: usize,
+    pub projects_item_identities_mapped: usize,
+    pub projects_content_identities_observed: usize,
     pub review_conversation_comment_snapshots_archived: usize,
     pub review_submission_snapshots_archived: usize,
     pub review_inline_comment_snapshots_archived: usize,
@@ -207,6 +211,8 @@ struct ApiRepositoryIssue {
 #[derive(Debug, Clone, Deserialize)]
 struct ApiIssue {
     number: u64,
+    #[serde(default)]
+    node_id: String,
     html_url: String,
     title: String,
     body: Option<String>,
@@ -224,6 +230,8 @@ struct ApiPullRef {
 #[derive(Debug, Clone, Deserialize)]
 struct ApiPullRequest {
     number: u64,
+    #[serde(default)]
+    node_id: String,
     html_url: String,
     title: String,
     body: Option<String>,
@@ -309,6 +317,17 @@ impl GitHubAdapter {
                 &observed_at,
             )?;
             write_observed_issue(root, remote_name, &canonical_id, &issue, &observed_at)?;
+            if project::observe_repository_content_identity(
+                root,
+                remote_name,
+                &canonical_id,
+                "issue",
+                issue.number,
+                &issue.node_id,
+                &observed_at,
+            )? {
+                report.projects_content_identities_observed += 1;
+            }
             report.issues_observed += 1;
 
             let comments = self.fetch_issue_comments(mapping.number)?;
@@ -351,6 +370,17 @@ impl GitHubAdapter {
                 &observed_at,
             )?;
             write_observed_review(root, remote_name, &canonical_id, &review, &observed_at)?;
+            if project::observe_repository_content_identity(
+                root,
+                remote_name,
+                &canonical_id,
+                "pull_request",
+                review.number,
+                &review.node_id,
+                &observed_at,
+            )? {
+                report.projects_content_identities_observed += 1;
+            }
             report.reviews_observed += 1;
             let social = review_ingress::archive_review_social(
                 self,
@@ -388,8 +418,11 @@ impl GitHubAdapter {
         report.discussion_managed_changes_archived += discussion_report.managed_changes_archived;
         report.discussion_social_snapshots_archived += discussion_report.social_snapshots_archived;
 
-        let projects_report = project::observe_projects_capabilities(self, root, remote_name)?;
+        let projects_report = project::observe_projects(self, root, remote_name)?;
         report.projects_capabilities_observed += projects_report.capabilities_observed;
+        report.projects_observed += projects_report.projects_observed;
+        report.projects_provider_changes_archived += projects_report.provider_changes_archived;
+        report.projects_item_identities_mapped += projects_report.item_identities_mapped;
 
         for issue in self.fetch_repository_issues()? {
             if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
@@ -1899,6 +1932,7 @@ mod tests {
         let root = test_root("observe");
         let issue = ApiIssue {
             number: 7,
+            node_id: "I_test_observe".into(),
             html_url: "https://github.com/owner/repo/issues/7".into(),
             title: "Remote title".into(),
             body: Some("Remote body\n".into()),
@@ -1930,6 +1964,7 @@ mod tests {
         let root = test_root("drift");
         let old = ApiIssue {
             number: 7,
+            node_id: "I_test_drift".into(),
             html_url: "https://github.com/owner/repo/issues/7".into(),
             title: "Old".into(),
             body: Some("Old body".into()),
@@ -2009,6 +2044,7 @@ mod tests {
         let root = test_root("review-observe");
         let review = ApiPullRequest {
             number: 23,
+            node_id: "PR_test_observe".into(),
             html_url: "https://github.com/owner/repo/pull/23".into(),
             title: "Remote review".into(),
             body: Some("Remote review body\n".into()),

@@ -178,6 +178,22 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
                 report.projects_capabilities_observed
             );
             println!(
+                "observed {} GitHub ProjectV2 project(s)",
+                report.projects_observed
+            );
+            println!(
+                "observed {} GitHub Project content node identit(y/ies)",
+                report.projects_content_identities_observed
+            );
+            println!(
+                "mapped {} GitHub Project item identit(y/ies)",
+                report.projects_item_identities_mapped
+            );
+            println!(
+                "archived {} GitHub Project provider-state change(s)",
+                report.projects_provider_changes_archived
+            );
+            println!(
                 "archived {} GitHub Discussion managed-field remote change(s)",
                 report.discussion_managed_changes_archived
             );
