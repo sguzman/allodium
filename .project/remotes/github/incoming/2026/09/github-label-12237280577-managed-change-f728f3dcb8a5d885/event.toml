@@ -1,0 +1,10 @@
+schema = "allodium.github.label-managed-change-observation/v0"
+id = "github-label-12237280577-managed-change-f728f3dcb8a5d885"
+remote = "github"
+kind = "label.managed_fields.observed_change"
+observed_at = "2026-09-17T13:39:37Z"
+evidence = "GitHub REST label observation changed since the previous local managed snapshot. Labels expose no updated_at revision and this representation does not identify the editing actor, so no actor or edit time is asserted."
+canonical_id = "label-allodium"
+remote_id = 12237280577
+url = "https://api.github.com/repos/sguzman/allodium/labels/provider-drift-m4-label-dogfood"
+fields = ["name"]
