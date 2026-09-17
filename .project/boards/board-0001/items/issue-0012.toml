@@ -1,5 +1,5 @@
 schema = "allodium.board-item/v0"
-object = "issue-0011"
+object = "issue-0012"
 
 [values]
-status = "blocked"
+status = "active"

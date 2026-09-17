@@ -1,0 +1,5 @@
+schema = "allodium.issue/v0"
+id = "issue-0012"
+title = "Harden GitHub event-driven reconciliation wakeups"
+state = "open"
+labels = ["m4", "github", "ingress"]

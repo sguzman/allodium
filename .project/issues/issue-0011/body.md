@@ -127,6 +127,8 @@ Observation now preserves provider option order instead of sorting options by ID
 
 The first and post-rebase acceptance passes both passed 84 core tests, 8 checked-in fixture tests, the ingress idempotence test, and 50 GitHub adapter tests, along with formatting, repository validation, and the real repository no-token plan smoke. The no-token plan remained `projects_auth_required` and contained no ProjectV2 mutation, including no `update_project_field_options`. The temporary helper and gate workflow self-removed before the product commit was pushed.
 
+Permanent serialized sync runs then exercised the accepted runtime through the normal production path. Run 215 observed zero ProjectV2 Projects, retained `projects_auth_required`, applied zero Project creates/binds/updates, zero single-select option-schema updates, zero field-value writes, and zero view creations, then re-observed and validated cleanly. Its generated GitHub observation-state commit safely rebased over the concurrently landed canonical progress record and pushed as `08d58b008b870eaddf5963f6aa400b9e23a72628`. Follow-up run 216 repeated the same zero-mutation authorization boundary and ended with `No durable GitHub state change.` This proves the new replacement-shaped option mutation cannot bypass the separate Projects authority and that the provider observation state has converged.
+
 The remaining end-to-end Projects acceptance criterion is still the separately authorized live dogfood. Without `ALLODIUM_GITHUB_PROJECTS_TOKEN`, the repository can prove the authority boundary and zero-mutation degraded mode but cannot exercise live Project creation, field/option evolution, item/value reconciliation, or provider drift/repair against GitHub.
 
 ## Design constraints
