@@ -18,12 +18,17 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
+  discussion:
+    types: [created, edited, deleted, transferred, pinned, unpinned, labeled, unlabeled, locked, unlocked, category_changed, answered, unanswered]
+  discussion_comment:
+    types: [created, edited, deleted]
   workflow_dispatch:
 
 permissions:
   contents: write
   issues: write
   pull-requests: write
+  discussions: write
 
 concurrency:
   group: allodium-github-sync
