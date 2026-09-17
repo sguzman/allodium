@@ -1,0 +1,4 @@
+schema = "allodium.board-field/v0"
+id = "target-date"
+name = "Target date"
+kind = "date"

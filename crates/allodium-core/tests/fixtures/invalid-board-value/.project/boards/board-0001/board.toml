@@ -1,0 +1,4 @@
+schema = "allodium.board/v0"
+id = "board-0001"
+title = "Fixture board"
+description = "Valid board fixture."

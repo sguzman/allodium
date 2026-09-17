@@ -1,0 +1,4 @@
+schema = "allodium.board/v0"
+id = "board-0001"
+title = "Allodium development"
+description = "Dogfood board for active Allodium work."

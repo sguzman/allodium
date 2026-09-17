@@ -155,7 +155,6 @@ struct GraphSocialRepository {
 struct GraphSocialDiscussion {
     id: String,
     number: i64,
-    url: String,
     author: Option<GraphActor>,
     editor: Option<GraphActor>,
     #[serde(rename = "authorAssociation")]

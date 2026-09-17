@@ -1,0 +1,5 @@
+schema = "allodium.board-item/v0"
+object = "issue-0001"
+
+[values]
+status = "not-an-option"

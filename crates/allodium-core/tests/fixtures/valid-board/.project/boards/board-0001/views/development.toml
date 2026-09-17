@@ -1,0 +1,5 @@
+schema = "allodium.board-view/v0"
+id = "development"
+name = "Development"
+layout = "board"
+group_by = "status"

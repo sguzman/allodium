@@ -66,3 +66,21 @@ fn checked_in_review_with_same_base_and_head_is_rejected() {
             .any(|error| error.contains("base and head must differ"))
     );
 }
+
+#[test]
+fn checked_in_valid_board_fixture_is_accepted() {
+    let report = validate(fixture("valid-board"));
+    assert!(report.is_ok(), "{:?}", report.errors);
+}
+
+#[test]
+fn checked_in_board_with_invalid_select_value_is_rejected() {
+    let report = validate(fixture("invalid-board-value"));
+    assert!(!report.is_ok());
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|error| error.contains("requires a declared option id"))
+    );
+}

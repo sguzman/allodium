@@ -1,0 +1,5 @@
+schema = "allodium.board-view/v0"
+id = "roadmap"
+name = "Roadmap"
+layout = "roadmap"
+end_field = "target-date"

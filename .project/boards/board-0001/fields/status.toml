@@ -1,0 +1,20 @@
+schema = "allodium.board-field/v0"
+id = "status"
+name = "Status"
+kind = "single_select"
+
+[[options]]
+id = "queued"
+name = "Queued"
+
+[[options]]
+id = "active"
+name = "Active"
+
+[[options]]
+id = "blocked"
+name = "Blocked"
+
+[[options]]
+id = "done"
+name = "Done"
