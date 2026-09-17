@@ -8,6 +8,8 @@ on:
     types: [opened, edited, closed, reopened, labeled, unlabeled, assigned, unassigned, milestoned, demilestoned]
   milestone:
     types: [created, edited, opened, closed]
+  label:
+    types: [created, edited]
   issue_comment:
     types: [created, edited, deleted]
   pull_request_target:
