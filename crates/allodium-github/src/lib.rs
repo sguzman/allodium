@@ -1,3 +1,4 @@
+mod discussion;
 mod label;
 mod milestone;
 mod release;
@@ -53,6 +54,7 @@ pub struct ObserveReport {
     pub milestone_managed_changes_archived: usize,
     pub labels_observed: usize,
     pub label_managed_changes_archived: usize,
+    pub discussion_capabilities_observed: usize,
     pub review_conversation_comment_snapshots_archived: usize,
     pub review_submission_snapshots_archived: usize,
     pub review_inline_comment_snapshots_archived: usize,
@@ -86,6 +88,8 @@ pub struct ApplyReport {
     pub labels_created: usize,
     pub labels_updated: usize,
     pub labels_observed: usize,
+    pub discussion_capabilities_observed: usize,
+    pub discussions_bootstrap_required: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -357,6 +361,9 @@ impl GitHubAdapter {
         let label_report = label::observe_labels(self, root, remote_name)?;
         report.labels_observed += label_report.observed;
         report.label_managed_changes_archived += label_report.managed_changes_archived;
+
+        let discussion_report = discussion::observe_discussions(self, root, remote_name)?;
+        report.discussion_capabilities_observed += discussion_report.capabilities_observed;
 
         for issue in self.fetch_repository_issues()? {
             if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
@@ -640,6 +647,13 @@ impl GitHubAdapter {
                         &operation.fields,
                     )?;
                     report.labels_updated += 1;
+                }
+                "observe_discussion_capabilities" => {
+                    discussion::apply_observe_discussion_capabilities(self, root, &plan.remote)?;
+                    report.discussion_capabilities_observed += 1;
+                }
+                "discussions_bootstrap_required" => {
+                    report.discussions_bootstrap_required += 1;
                 }
                 "observe_wiki" => {
                     let wiki_report = wiki::observe_wiki(self, root, &plan.remote)?;

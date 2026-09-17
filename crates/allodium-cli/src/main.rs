@@ -122,6 +122,15 @@ fn github_plan(root: PathBuf, remote_name: &str) -> ExitCode {
             );
         }
         plan.operations.extend(label_plan.operations);
+
+        let discussion_plan =
+            allodium_core::github_discussion::plan_discussions(&root, remote_name)?;
+        if plan.remote != discussion_plan.remote || plan.repository != discussion_plan.repository {
+            return Err(
+                "GitHub Discussion projection plan disagrees about the configured remote".into(),
+            );
+        }
+        plan.operations.extend(discussion_plan.operations);
         Ok(plan)
     });
 
@@ -148,6 +157,10 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
                 report.milestones_observed
             );
             println!("observed {} GitHub label(s)", report.labels_observed);
+            println!(
+                "observed {} GitHub Discussion capability snapshot(s)",
+                report.discussion_capabilities_observed
+            );
             println!(
                 "archived {} GitHub Wiki remote-tree change(s)",
                 report.wiki_remote_changes_archived
@@ -242,6 +255,14 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
             println!("created {} GitHub label(s)", report.labels_created);
             println!("updated {} GitHub label(s)", report.labels_updated);
             println!("observed {} GitHub label(s)", report.labels_observed);
+            println!(
+                "observed {} GitHub Discussion capability snapshot(s)",
+                report.discussion_capabilities_observed
+            );
+            println!(
+                "{} GitHub Discussion projection(s) require provider bootstrap",
+                report.discussions_bootstrap_required
+            );
             ExitCode::SUCCESS
         }
         Err(error) => fail(error),
