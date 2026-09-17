@@ -1,0 +1,10 @@
+schema = "allodium.github.observed-label/v0"
+canonical_id = "label-allodium"
+remote_id = 12237280577
+node_id = "LA_kwDOUdYYPs8AAAAC2WYVQQ"
+url = "https://api.github.com/repos/sguzman/allodium/labels/allodium"
+name = "allodium"
+color = "6f42c1"
+description = "Allodium project-state and projection infrastructure."
+default = false
+observed_at = "2026-09-17T13:33:54Z"
