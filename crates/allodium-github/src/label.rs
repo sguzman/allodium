@@ -197,11 +197,8 @@ pub(super) fn apply_update_label(
     }
     let payload = update_payload(label, fields)?;
     let url = label_url(adapter, &live.name)?;
-    let updated: ApiLabel = adapter.send(
-        adapter
-            .request(adapter.client.patch(url))
-            .json(&payload),
-    )?;
+    let updated: ApiLabel =
+        adapter.send(adapter.request(adapter.client.patch(url)).json(&payload))?;
     if updated.id != remote_id {
         return Err(format!(
             "GitHub label update for {:?} returned provider id {} instead of mapped id {remote_id}",
@@ -262,10 +259,7 @@ fn create_payload(label: &CanonicalLabel) -> serde_json::Value {
     serde_json::Value::Object(object)
 }
 
-fn update_payload(
-    label: &CanonicalLabel,
-    fields: &[String],
-) -> Result<serde_json::Value, String> {
+fn update_payload(label: &CanonicalLabel, fields: &[String]) -> Result<serde_json::Value, String> {
     let mut object = serde_json::Map::new();
     for field in fields {
         match field.as_str() {
@@ -301,19 +295,17 @@ fn update_payload(
 }
 
 fn canonical_color(label: &CanonicalLabel) -> Option<String> {
-    label
-        .record
-        .color
-        .as_deref()
-        .map(|color| color.strip_prefix('#').unwrap_or(color).to_ascii_lowercase())
+    label.record.color.as_deref().map(|color| {
+        color
+            .strip_prefix('#')
+            .unwrap_or(color)
+            .to_ascii_lowercase()
+    })
 }
 
 fn label_url(adapter: &GitHubAdapter, current_name: &str) -> Result<Url, String> {
-    let mut url = Url::parse(&adapter.api_url(&format!(
-        "/repos/{}/labels",
-        adapter.repository
-    )))
-    .map_err(|error| format!("could not build GitHub label URL: {error}"))?;
+    let mut url = Url::parse(&adapter.api_url(&format!("/repos/{}/labels", adapter.repository)))
+        .map_err(|error| format!("could not build GitHub label URL: {error}"))?;
     url.path_segments_mut()
         .map_err(|_| "could not append GitHub label name to API URL".to_string())?
         .push(current_name);
@@ -435,9 +427,7 @@ fn transition_fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use allodium_core::github_label::{
-        LABEL_MAPPINGS_SCHEMA_V0, LabelMappings,
-    };
+    use allodium_core::github_label::{LABEL_MAPPINGS_SCHEMA_V0, LabelMappings};
     use allodium_core::label::{LABEL_SCHEMA_V0, LabelRecord};
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -526,11 +516,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    fn canonical(
-        name: &str,
-        description: Option<&str>,
-        color: Option<&str>,
-    ) -> CanonicalLabel {
+    fn canonical(name: &str, description: Option<&str>, color: Option<&str>) -> CanonicalLabel {
         CanonicalLabel {
             record: LabelRecord {
                 schema: LABEL_SCHEMA_V0.into(),

@@ -1,3 +1,4 @@
+mod label;
 mod milestone;
 mod release;
 mod review_ingress;
@@ -10,6 +11,7 @@ use allodium_core::github::{
     ObservedReview, PLAN_SCHEMA_V0, REVIEW_MAPPINGS_SCHEMA_V0, ReviewMapping, ReviewMappings,
     render_issue_body, render_review_body,
 };
+use allodium_core::label::{CanonicalLabel, load_labels};
 use allodium_core::milestone::{CanonicalMilestone, load_milestones};
 use allodium_core::release::{CanonicalRelease, load_releases};
 use allodium_core::{CanonicalIssue, CanonicalReview, load_issues, load_remote, load_reviews};
@@ -49,6 +51,8 @@ pub struct ObserveReport {
     pub release_managed_changes_archived: usize,
     pub milestones_observed: usize,
     pub milestone_managed_changes_archived: usize,
+    pub labels_observed: usize,
+    pub label_managed_changes_archived: usize,
     pub review_conversation_comment_snapshots_archived: usize,
     pub review_submission_snapshots_archived: usize,
     pub review_inline_comment_snapshots_archived: usize,
@@ -79,6 +83,9 @@ pub struct ApplyReport {
     pub milestones_created: usize,
     pub milestones_updated: usize,
     pub milestones_observed: usize,
+    pub labels_created: usize,
+    pub labels_updated: usize,
+    pub labels_observed: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -347,6 +354,10 @@ impl GitHubAdapter {
         report.milestones_observed += milestone_report.observed;
         report.milestone_managed_changes_archived += milestone_report.managed_changes_archived;
 
+        let label_report = label::observe_labels(self, root, remote_name)?;
+        report.labels_observed += label_report.observed;
+        report.label_managed_changes_archived += label_report.managed_changes_archived;
+
         for issue in self.fetch_repository_issues()? {
             if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
                 continue;
@@ -397,6 +408,10 @@ impl GitHubAdapter {
         let milestones = load_milestones(root)?
             .into_iter()
             .map(|milestone| (milestone.record.id.clone(), milestone))
+            .collect::<BTreeMap<_, _>>();
+        let labels = load_labels(root)?
+            .into_iter()
+            .map(|label| (label.record.id.clone(), label))
             .collect::<BTreeMap<_, _>>();
         let mut issue_mappings = load_mappings(root, &plan.remote)?;
         let mut review_mappings = load_review_mappings(root, &plan.remote)?;
@@ -601,6 +616,30 @@ impl GitHubAdapter {
                         &operation.fields,
                     )?;
                     report.milestones_updated += 1;
+                }
+                "create_label" => {
+                    let canonical = require_label(&labels, &operation.canonical_id)?;
+                    label::apply_create_label(self, root, &plan.remote, canonical)?;
+                    report.labels_created += 1;
+                }
+                "observe_label" => {
+                    let canonical = require_label(&labels, &operation.canonical_id)?;
+                    let remote_id = require_number(operation)?;
+                    label::apply_observe_label(self, root, &plan.remote, canonical, remote_id)?;
+                    report.labels_observed += 1;
+                }
+                "update_label" => {
+                    let canonical = require_label(&labels, &operation.canonical_id)?;
+                    let remote_id = require_number(operation)?;
+                    label::apply_update_label(
+                        self,
+                        root,
+                        &plan.remote,
+                        canonical,
+                        remote_id,
+                        &operation.fields,
+                    )?;
+                    report.labels_updated += 1;
                 }
                 "observe_wiki" => {
                     let wiki_report = wiki::observe_wiki(self, root, &plan.remote)?;
@@ -828,6 +867,15 @@ fn github_api_error(status: reqwest::StatusCode, body: &str) -> String {
         );
     }
     format!("GitHub API returned {status}: {body}")
+}
+
+fn require_label<'a>(
+    labels: &'a BTreeMap<String, CanonicalLabel>,
+    canonical_id: &str,
+) -> Result<&'a CanonicalLabel, String> {
+    labels
+        .get(canonical_id)
+        .ok_or_else(|| format!("plan references unknown canonical label {canonical_id:?}"))
 }
 
 fn require_milestone<'a>(

@@ -160,7 +160,7 @@ fn plan_label(
             canonical_id: canonical_id.clone(),
             action: "create_label".into(),
             number: None,
-            fields: vec!["name".into(), "description".into(), "color".into()],
+            fields: managed_fields(label),
             reason: "canonical label has no GitHub label mapping".into(),
         });
         return Ok(());
@@ -171,7 +171,7 @@ fn plan_label(
             canonical_id: canonical_id.clone(),
             action: "observe_label".into(),
             number: Some(mapping.remote_id),
-            fields: vec!["name".into(), "description".into(), "color".into()],
+            fields: managed_fields(label),
             reason: "label mapping exists but the local observed GitHub label snapshot is missing"
                 .into(),
         });
@@ -188,11 +188,13 @@ fn plan_label(
     if observed.name != label.record.name {
         fields.push("name".into());
     }
-    if observed.description != label.record.description {
+    if label.record.description.is_some() && observed.description != label.record.description {
         fields.push("description".into());
     }
-    if observed.color != canonical_provider_color(label) {
-        fields.push("color".into());
+    if let Some(color) = canonical_provider_color(label) {
+        if !observed.color.eq_ignore_ascii_case(&color) {
+            fields.push("color".into());
+        }
     }
     if !fields.is_empty() {
         operations.push(GitHubOperation {
@@ -208,15 +210,24 @@ fn plan_label(
     Ok(())
 }
 
-fn canonical_provider_color(label: &CanonicalLabel) -> String {
-    label
-        .record
-        .color
-        .as_deref()
-        .unwrap_or("#ededed")
-        .strip_prefix('#')
-        .unwrap_or_else(|| label.record.color.as_deref().unwrap_or("ededed"))
-        .to_ascii_lowercase()
+fn canonical_provider_color(label: &CanonicalLabel) -> Option<String> {
+    label.record.color.as_deref().map(|color| {
+        color
+            .strip_prefix('#')
+            .unwrap_or(color)
+            .to_ascii_lowercase()
+    })
+}
+
+fn managed_fields(label: &CanonicalLabel) -> Vec<String> {
+    let mut fields = vec!["name".into()];
+    if label.record.description.is_some() {
+        fields.push("description".into());
+    }
+    if label.record.color.is_some() {
+        fields.push("color".into());
+    }
+    fields
 }
 
 fn label_mappings_path(root: &Path, remote_name: &str) -> PathBuf {
@@ -279,6 +290,26 @@ mod tests {
         for field in ["name", "description", "color"] {
             assert!(plan.operations[0].fields.contains(&field.to_string()));
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn absent_optional_fields_are_unmanaged() {
+        let root = test_project("optional-unmanaged", true);
+        fs::write(
+            root.join(".project/labels/label-allodium.toml"),
+            "schema = \"allodium.label/v0\"\nid = \"label-allodium\"\nname = \"allodium\"\n",
+        )
+        .unwrap();
+        save_mapping(&root);
+        save_observation(
+            &root,
+            "allodium",
+            "ffffff",
+            Some("Provider-owned description"),
+        );
+        let plan = plan_labels(&root, "github").unwrap();
+        assert!(plan.operations.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 
