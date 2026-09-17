@@ -1,0 +1,58 @@
+name: M4 Discussion social ingress gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/m4-discussion-ingress.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+      - name: Wire Discussion social ingress
+        run: |
+          python .github/m4-discussion-ingress.py
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/plan.toml
+          cat /tmp/plan.toml
+          grep -q 'action = "discussions_bootstrap_required"' /tmp/plan.toml
+          if grep -q 'action = "create_discussion"' /tmp/plan.toml; then
+            echo 'Discussion create unexpectedly became reachable while provider capability is disabled' >&2
+            exit 1
+          fi
+      - name: Publish clean Discussion social ingress
+        run: |
+          set -euo pipefail
+          git config user.name 'Allodium implementation gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/m4-discussion-ingress.yml
+          git rm .github/m4-discussion-ingress.py
+          git add crates/allodium-github/src/discussion_ingress.rs crates/allodium-github/src/discussion.rs crates/allodium-github/src/lib.rs crates/allodium-cli/src/main.rs
+          git commit -m 'feat(github): archive Discussion social state'
+          git fetch origin main
+          git rebase origin/main
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/rebased-plan.toml
+          grep -q 'action = "discussions_bootstrap_required"' /tmp/rebased-plan.toml
+          if grep -q 'action = "create_discussion"' /tmp/rebased-plan.toml; then
+            echo 'Discussion create unexpectedly became reachable after rebase' >&2
+            exit 1
+          fi
+          git push origin HEAD:main
