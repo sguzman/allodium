@@ -621,7 +621,7 @@ fn parse_project(value: &Value) -> Result<ProviderProject, String> {
 
 fn parse_field(value: &Value) -> Result<ObservedProviderField, String> {
     let provider_type = required_string(value, "__typename")?;
-    let mut options = value
+    let options = value
         .get("options")
         .and_then(Value::as_array)
         .into_iter()
@@ -635,7 +635,6 @@ fn parse_field(value: &Value) -> Result<ObservedProviderField, String> {
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    options.sort_by(|left, right| left.id.cmp(&right.id));
     let mut iterations = Vec::new();
     if let Some(configuration) = value.get("configuration") {
         for (key, completed) in [("iterations", false), ("completedIterations", true)] {
@@ -1058,6 +1057,31 @@ mod tests {
         let events = walk_named(&incoming, "event.toml");
         assert_eq!(events, 1);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn provider_option_order_is_preserved_for_schema_round_trip() {
+        let value = json!({
+            "__typename": "ProjectV2SingleSelectField",
+            "id": "PVTSSF_status",
+            "databaseId": 101,
+            "name": "Status",
+            "dataType": "SINGLE_SELECT",
+            "updatedAt": "2026-09-17T20:00:00Z",
+            "options": [
+                {"id": "z-option", "name": "Last alphabetically", "description": "foreign-z", "color": "PINK"},
+                {"id": "a-option", "name": "First alphabetically", "description": "foreign-a", "color": "BLUE"}
+            ]
+        });
+        let field = parse_field(&value).unwrap();
+        assert_eq!(
+            field
+                .options
+                .iter()
+                .map(|option| option.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["z-option", "a-option"]
+        );
     }
 
     #[test]

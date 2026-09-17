@@ -8,7 +8,9 @@ use allodium_core::github_project::{
     ProjectsProjectionConfig, load_observed_project_content, load_observed_projects_capabilities,
     load_project_mappings, load_projects_projection_config, save_project_mappings,
 };
-use allodium_core::github_project_observation::load_observed_project_provider_state;
+use allodium_core::github_project_observation::{
+    ObservedProviderField, load_observed_project_provider_state,
+};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::env;
@@ -21,6 +23,7 @@ pub(super) enum ProjectsApplyOutcome {
     Observed(usize),
     Updated,
     FieldCreated,
+    FieldOptionsUpdated,
     ItemAdded,
     FieldValueUpdated,
     ViewCreated,
@@ -41,6 +44,9 @@ pub(super) fn apply_operation(
         }
         "update_project" => update_project(adapter, root, remote_name, operation),
         "create_project_field" => create_field(adapter, root, remote_name, operation),
+        "update_project_field_options" => {
+            update_field_options(adapter, root, remote_name, operation)
+        }
         "add_project_item" => add_item(adapter, root, remote_name, operation),
         "update_project_field_value" => update_field_value(adapter, root, remote_name, operation),
         "create_project_view" => create_view(adapter, root, remote_name, operation),
@@ -333,6 +339,190 @@ fn create_field(
     );
     save_project_mappings(root, remote_name, &mappings)?;
     Ok(ProjectsApplyOutcome::FieldCreated)
+}
+
+fn update_field_options(
+    adapter: &GitHubAdapter,
+    root: &Path,
+    remote_name: &str,
+    operation: &GitHubOperation,
+) -> Result<ProjectsApplyOutcome, String> {
+    let (config, token, _owner_node_id) = authorized_context(adapter, root, remote_name)?;
+    let board = board(root, &operation.canonical_id)?;
+    if binding(&config, &board.record.id)?.target != "managed" {
+        return Err(
+            "automatic ProjectV2 option-schema mutation is restricted to managed targets".into(),
+        );
+    }
+    let field_id = tagged(operation, "field:")?;
+    let field = board_field(&board, field_id)?;
+    if field.record.kind != "single_select" {
+        return Err("update_project_field_options requires a canonical single_select field".into());
+    }
+    let project_mapping =
+        require_fresh_project(adapter, root, remote_name, &token, &board.record.id)?;
+    let field_mapping = project_mapping
+        .fields
+        .get(field_id)
+        .cloned()
+        .ok_or_else(|| "ProjectV2 field mapping disappeared after freshness check".to_string())?;
+    let observed = load_observed_project_provider_state(root, remote_name, &board.record.id)?
+        .ok_or_else(|| {
+            "ProjectV2 provider-state observation disappeared after freshness check".to_string()
+        })?;
+    let provider_field = observed
+        .fields
+        .iter()
+        .find(|candidate| candidate.node_id == field_mapping.node_id)
+        .cloned()
+        .ok_or_else(|| {
+            "mapped ProjectV2 field is absent from provider-state observation".to_string()
+        })?;
+
+    let options = merged_single_select_options(field, &field_mapping, &provider_field)?;
+    let query = r#"
+        mutation($field: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
+          updateProjectV2Field(input: {fieldId: $field, singleSelectOptions: $options}) {
+            projectV2Field {
+              ... on ProjectV2SingleSelectField {
+                id name dataType options { id name description color }
+              }
+            }
+          }
+        }
+    "#;
+    let payload = project::graphql(
+        adapter,
+        &token,
+        query,
+        json!({"field": field_mapping.node_id, "options": options}),
+    )?;
+    project::graphql_errors(&payload)?;
+    let updated = payload
+        .pointer("/data/updateProjectV2Field/projectV2Field")
+        .ok_or_else(|| "GitHub updateProjectV2Field returned no single-select field".to_string())?;
+    if required_str(updated, "id")? != field_mapping.node_id {
+        return Err("updated ProjectV2 field identity changed unexpectedly".into());
+    }
+    let returned = updated
+        .get("options")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "updated ProjectV2 field returned no options".to_string())?;
+
+    for previous in &provider_field.options {
+        if !returned.iter().any(|candidate| {
+            candidate.get("id").and_then(Value::as_str) == Some(previous.id.as_str())
+        }) {
+            return Err(format!(
+                "GitHub option-schema update did not preserve pre-existing provider option identity {:?}",
+                previous.id
+            ));
+        }
+    }
+
+    let mut mappings = load_project_mappings(root, remote_name)?;
+    let board_mapping = mappings
+        .boards
+        .get_mut(&board.record.id)
+        .ok_or_else(|| "ProjectV2 mapping disappeared after option-schema mutation".to_string())?;
+    let mapped_field = board_mapping.fields.get_mut(field_id).ok_or_else(|| {
+        "ProjectV2 field mapping disappeared after option-schema mutation".to_string()
+    })?;
+    for canonical in &field.record.options {
+        let marker = option_marker(&field.record.id, &canonical.id);
+        if let Some(existing_id) = field_mapping.options.get(&canonical.id) {
+            let provider = returned
+                .iter()
+                .find(|candidate| {
+                    candidate.get("id").and_then(Value::as_str) == Some(existing_id.as_str())
+                })
+                .ok_or_else(|| format!("updated mapped option {:?} disappeared", canonical.id))?;
+            if provider.get("name").and_then(Value::as_str) != Some(canonical.name.as_str())
+                || provider.get("description").and_then(Value::as_str) != Some(marker.as_str())
+            {
+                return Err(format!(
+                    "updated mapped option {:?} returned unexpected managed metadata",
+                    canonical.id
+                ));
+            }
+        } else {
+            let matches = returned
+                .iter()
+                .filter(|candidate| {
+                    candidate.get("description").and_then(Value::as_str) == Some(marker.as_str())
+                })
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return Err(format!(
+                    "new canonical option {:?} could not be identified uniquely by its Allodium marker",
+                    canonical.id
+                ));
+            }
+            mapped_field
+                .options
+                .insert(canonical.id.clone(), required_str(matches[0], "id")?);
+        }
+    }
+    save_project_mappings(root, remote_name, &mappings)?;
+    Ok(ProjectsApplyOutcome::FieldOptionsUpdated)
+}
+
+fn merged_single_select_options(
+    field: &CanonicalBoardField,
+    mapping: &ProjectFieldMapping,
+    provider_field: &ObservedProviderField,
+) -> Result<Vec<Value>, String> {
+    let canonical_by_provider = mapping
+        .options
+        .iter()
+        .map(|(canonical, provider)| (provider.as_str(), canonical.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut merged = Vec::new();
+    for provider in &provider_field.options {
+        if let Some(canonical_id) = canonical_by_provider.get(provider.id.as_str()) {
+            if let Some(canonical) = field
+                .record
+                .options
+                .iter()
+                .find(|option| option.id == *canonical_id)
+            {
+                merged.push(json!({
+                    "id": provider.id,
+                    "name": canonical.name,
+                    "description": option_marker(&field.record.id, &canonical.id),
+                    "color": provider.color,
+                }));
+                continue;
+            }
+        }
+        merged.push(json!({
+            "id": provider.id,
+            "name": provider.name,
+            "description": provider.description,
+            "color": provider.color,
+        }));
+    }
+    for (index, canonical) in field.record.options.iter().enumerate() {
+        if mapping.options.contains_key(&canonical.id) {
+            continue;
+        }
+        let marker = option_marker(&field.record.id, &canonical.id);
+        if provider_field
+            .options
+            .iter()
+            .any(|provider| provider.description == marker)
+        {
+            return Err(format!(
+                "unmapped provider option already carries Allodium marker {marker:?}; refusing implicit identity adoption"
+            ));
+        }
+        merged.push(json!({
+            "name": canonical.name,
+            "description": marker,
+            "color": option_color(index),
+        }));
+    }
+    Ok(merged)
 }
 
 fn add_item(
@@ -1004,6 +1194,199 @@ mod tests {
         assert!(requests[3].contains("authorization: Bearer projects-token"));
         assert!(requests[3].contains("\"vertical_group_by\":[101]"));
         assert!(!requests[3].contains("repo-token"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn option_merge_preserves_provider_order_foreign_and_removed_options() {
+        use allodium_core::github_project_observation::ObservedProviderOption;
+
+        let root = test_root("option-merge");
+        write_ready_root(&root, "ALLODIUM_RUNTIME_OPTION_MERGE");
+        fs::write(
+            root.join(".project/boards/board-0001/fields/status.toml"),
+            "schema = \"allodium.board-field/v0\"\nid = \"status\"\nname = \"Status\"\nkind = \"single_select\"\n\n[[options]]\nid = \"todo\"\nname = \"To do\"\n\n[[options]]\nid = \"doing\"\nname = \"Doing\"\n",
+        )
+        .unwrap();
+        let board = board(&root, "board-0001").unwrap();
+        let field = board_field(&board, "status").unwrap();
+        let mapping = ProjectFieldMapping {
+            node_id: "PVTSSF_status".into(),
+            data_type: "SINGLE_SELECT".into(),
+            options: BTreeMap::from([
+                ("todo".into(), "provider-todo".into()),
+                ("retired".into(), "provider-retired".into()),
+            ]),
+        };
+        let provider = ObservedProviderField {
+            node_id: "PVTSSF_status".into(),
+            provider_type: "ProjectV2SingleSelectField".into(),
+            name: "Status".into(),
+            data_type: "SINGLE_SELECT".into(),
+            provider_database_id: Some(101),
+            remote_updated_at: "2026-09-17T20:00:00Z".into(),
+            options: vec![
+                ObservedProviderOption {
+                    id: "foreign".into(),
+                    name: "Foreign".into(),
+                    description: "provider".into(),
+                    color: "PINK".into(),
+                },
+                ObservedProviderOption {
+                    id: "provider-todo".into(),
+                    name: "Todo".into(),
+                    description: "allodium:status:todo".into(),
+                    color: "BLUE".into(),
+                },
+                ObservedProviderOption {
+                    id: "provider-retired".into(),
+                    name: "Retired".into(),
+                    description: "allodium:status:retired".into(),
+                    color: "GRAY".into(),
+                },
+            ],
+            iterations: Vec::new(),
+        };
+        let merged = merged_single_select_options(field, &mapping, &provider).unwrap();
+        assert_eq!(merged.len(), 4);
+        assert_eq!(merged[0]["id"], "foreign");
+        assert_eq!(merged[0]["name"], "Foreign");
+        assert_eq!(merged[1]["id"], "provider-todo");
+        assert_eq!(merged[1]["name"], "To do");
+        assert_eq!(merged[1]["color"], "BLUE");
+        assert_eq!(merged[2]["id"], "provider-retired");
+        assert_eq!(merged[2]["name"], "Retired");
+        assert!(merged[3].get("id").is_none());
+        assert_eq!(merged[3]["name"], "Doing");
+        assert_eq!(merged[3]["description"], "allodium:status:doing");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_option_update_preserves_existing_ids_and_maps_new_marker() {
+        use allodium_core::github_project_observation::ObservedProviderOption;
+
+        let root = test_root("option-update");
+        write_ready_root(&root, "ALLODIUM_RUNTIME_OPTION_UPDATE");
+        fs::write(
+            root.join(".project/boards/board-0001/fields/status.toml"),
+            "schema = \"allodium.board-field/v0\"\nid = \"status\"\nname = \"Status\"\nkind = \"single_select\"\n\n[[options]]\nid = \"todo\"\nname = \"To do\"\n\n[[options]]\nid = \"doing\"\nname = \"Doing\"\n",
+        )
+        .unwrap();
+        let mut boards = BTreeMap::new();
+        boards.insert(
+            "board-0001".into(),
+            ProjectMapping {
+                number: 7,
+                node_id: "PVT_project".into(),
+                url: "https://github.com/users/sguzman/projects/7".into(),
+                owner_node_id: "U_owner".into(),
+                items: BTreeMap::new(),
+                fields: BTreeMap::from([(
+                    "status".into(),
+                    ProjectFieldMapping {
+                        node_id: "PVTSSF_status".into(),
+                        data_type: "SINGLE_SELECT".into(),
+                        options: BTreeMap::from([("todo".into(), "provider-todo".into())]),
+                    },
+                )]),
+                views: BTreeMap::new(),
+            },
+        );
+        save_project_mappings(
+            &root,
+            "github",
+            &ProjectMappings {
+                schema: PROJECT_MAPPINGS_SCHEMA_V0.into(),
+                boards,
+            },
+        )
+        .unwrap();
+        let provider_options = vec![
+            ObservedProviderOption {
+                id: "foreign".into(),
+                name: "Foreign".into(),
+                description: "provider".into(),
+                color: "PINK".into(),
+            },
+            ObservedProviderOption {
+                id: "provider-todo".into(),
+                name: "Todo".into(),
+                description: "allodium:status:todo".into(),
+                color: "BLUE".into(),
+            },
+        ];
+        write_observed_project_provider_state(
+            &root,
+            "github",
+            &ObservedProjectProviderState {
+                schema: OBSERVED_PROJECT_PROVIDER_STATE_SCHEMA_V0.into(),
+                canonical_id: "board-0001".into(),
+                number: 7,
+                node_id: "PVT_project".into(),
+                url: "https://github.com/users/sguzman/projects/7".into(),
+                owner_node_id: "U_owner".into(),
+                title: "Board".into(),
+                short_description: String::new(),
+                closed: false,
+                remote_updated_at: "2026-09-17T20:00:00Z".into(),
+                observed_at: "2026-09-17T20:00:30Z".into(),
+                fields: vec![ObservedProviderField {
+                    node_id: "PVTSSF_status".into(),
+                    provider_type: "ProjectV2SingleSelectField".into(),
+                    name: "Status".into(),
+                    data_type: "SINGLE_SELECT".into(),
+                    provider_database_id: Some(101),
+                    remote_updated_at: "2026-09-17T20:00:00Z".into(),
+                    options: provider_options,
+                    iterations: Vec::new(),
+                }],
+                items: Vec::new(),
+                views: Vec::new(),
+            },
+        )
+        .unwrap();
+        unsafe { env::set_var("ALLODIUM_RUNTIME_OPTION_UPDATE", "projects-token") };
+        let live = r#"{"data":{"node":{"id":"PVT_project","number":7,"url":"https://github.com/users/sguzman/projects/7","title":"Board","shortDescription":"","closed":false,"updatedAt":"2026-09-17T20:00:00Z","owner":{"id":"U_owner"},"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","id":"PVTSSF_status","databaseId":101,"name":"Status","dataType":"SINGLE_SELECT","updatedAt":"2026-09-17T20:00:00Z","options":[{"id":"foreign","name":"Foreign","description":"provider","color":"PINK"},{"id":"provider-todo","name":"Todo","description":"allodium:status:todo","color":"BLUE"}]}],"pageInfo":{"hasNextPage":false}},"views":{"nodes":[],"pageInfo":{"hasNextPage":false}},"items":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}"#;
+        let updated = r#"{"data":{"updateProjectV2Field":{"projectV2Field":{"id":"PVTSSF_status","name":"Status","dataType":"SINGLE_SELECT","options":[{"id":"foreign","name":"Foreign","description":"provider","color":"PINK"},{"id":"provider-todo","name":"To do","description":"allodium:status:todo","color":"BLUE"},{"id":"provider-doing","name":"Doing","description":"allodium:status:doing","color":"BLUE"}]}}}}"#;
+        let responses = vec![
+            json_response(
+                200,
+                r#"{"data":{"user":{"id":"U_owner","projectsV2":{"totalCount":1}}}}"#,
+            ),
+            json_response(200, live),
+            json_response(200, updated),
+        ];
+        let (base, requests, handle) = response_server(responses);
+        let operation = GitHubOperation {
+            canonical_id: "board-0001".into(),
+            action: "update_project_field_options".into(),
+            number: Some(7),
+            fields: vec!["field:status".into()],
+            reason: "test".into(),
+        };
+        assert_eq!(
+            apply_operation(&test_adapter(base), &root, "github", &operation).unwrap(),
+            ProjectsApplyOutcome::FieldOptionsUpdated
+        );
+        handle.join().unwrap();
+        unsafe { env::remove_var("ALLODIUM_RUNTIME_OPTION_UPDATE") };
+        let mappings = load_project_mappings(&root, "github").unwrap();
+        assert_eq!(
+            mappings.boards["board-0001"].fields["status"].options["todo"],
+            "provider-todo"
+        );
+        assert_eq!(
+            mappings.boards["board-0001"].fields["status"].options["doing"],
+            "provider-doing"
+        );
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[2].contains("authorization: Bearer projects-token"));
+        assert!(requests[2].contains("provider-todo"));
+        assert!(requests[2].contains("foreign"));
+        assert!(requests[2].contains("allodium:status:doing"));
+        assert!(!requests[2].contains("repo-token"));
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -61,3 +61,16 @@ User-owned Project view creation requires a numeric REST user identifier even th
 V0 treats managed view configuration as immutable after creation. Observation still archives provider drift, but Allodium does not attempt to repair name/layout/grouping changes because GitHub's currently audited write surfaces do not expose the complete configuration symmetrically. Existing-target views likewise require an explicit stable binding design and are never adopted by matching a name.
 
 Canonical `roadmap` views remain deferred. Their `start_field`/`end_field` semantics do not have an audited lossless input in the current create-view contract, so Allodium will not create a superficially similar roadmap and call it projected. View deletion is also unsupported; canonical absence has no provider-deletion meaning in v0.
+
+
+## Managed single-select option evolution
+
+GitHub's `updateProjectV2Field` treats a supplied single-select option list as replacement-shaped provider schema. GitHub's option input accepts an existing option `id` specifically to preserve option identity during updates and avoid clearing item values. Allodium therefore never sends a canonical-only option list.
+
+For an explicitly `managed` single-select field, Allodium starts from the complete observed provider option sequence. Every observed option is emitted in the same order and with its existing provider ID. A provider option mapped to a still-present canonical option receives the canonical display name and deterministic `allodium:<field-id>:<option-id>` marker while preserving its existing provider color and provider option ID. Foreign provider options and options whose former canonical counterpart has been removed are emitted unchanged. Canonical absence therefore does not mean provider option deletion.
+
+A newly added canonical option is appended without a provider ID, with its Allodium marker and a deterministic creation color. After the mutation, the returned schema must still contain every pre-existing provider option ID. Existing canonical mappings are verified by their provider IDs, while each new canonical option is mapped only from exactly one returned Allodium marker. A missing mapped option, marker collision, identity disappearance, or ambiguous new marker is a refusal/review boundary rather than a name-based recovery rule.
+
+Automatic option-schema mutation is restricted to managed Project targets. Existing-target fields remain review-only because Allodium has not granted itself authority to rewrite externally owned provider taxonomy. Every option-schema write also passes the normal full-Project optimistic freshness check before mutation and is followed by re-observation in the serialized sync loop.
+
+Provider option order is now preserved by observation rather than sorted by ID. Once the adapter can round-trip whole option schemas, discarding provider order would itself be an unintended schema mutation.

@@ -439,16 +439,100 @@ fn plan_board(
             return Ok(());
         }
         if field.record.kind == "single_select" {
+            let Some(provider_field) = provider_state
+                .fields
+                .iter()
+                .find(|candidate| candidate.node_id == field_mapping.node_id)
+            else {
+                operations.push(project_operation(
+                    &board.record.id,
+                    "observe_project",
+                    Some(mapping.number),
+                    vec![format!("field-provider-state:{}", field.record.id)],
+                    "mapped ProjectV2 single-select field is absent from the persisted provider snapshot; refresh observation before schema mutation",
+                ));
+                return Ok(());
+            };
+            let mut update_options = false;
             for option in &field.record.options {
-                if !field_mapping.options.contains_key(&option.id) {
-                    operations.push(runtime_requirement(
-                        &board.record.id,
-                        Some(mapping.number),
-                        vec![format!("field-option:{}:{}", field.record.id, option.id)],
-                        "canonical single-select option has no stable provider option identity; option-schema mutation is intentionally not guessed",
-                    ));
-                    return Ok(());
+                let marker = canonical_option_marker(&field.record.id, &option.id);
+                match field_mapping.options.get(&option.id) {
+                    Some(provider_id) => {
+                        let Some(provider_option) = provider_field
+                            .options
+                            .iter()
+                            .find(|candidate| candidate.id == *provider_id)
+                        else {
+                            operations.push(runtime_requirement(
+                                &board.record.id,
+                                Some(mapping.number),
+                                vec![format!(
+                                    "field-option-identity-review:{}:{}",
+                                    field.record.id, option.id
+                                )],
+                                "mapped single-select option is absent from the observed provider schema; refusing name/marker-based identity recovery",
+                            ));
+                            return Ok(());
+                        };
+                        if provider_option.name != option.name
+                            || provider_option.description != marker
+                        {
+                            if binding.target == "managed" {
+                                update_options = true;
+                            } else {
+                                operations.push(runtime_requirement(
+                                    &board.record.id,
+                                    Some(mapping.number),
+                                    vec![format!(
+                                        "field-option-drift-review:{}:{}",
+                                        field.record.id, option.id
+                                    )],
+                                    "existing-target single-select option differs from canonical managed metadata; automatic provider schema mutation is disabled",
+                                ));
+                                return Ok(());
+                            }
+                        }
+                    }
+                    None => {
+                        if provider_field
+                            .options
+                            .iter()
+                            .any(|candidate| candidate.description == marker)
+                        {
+                            operations.push(runtime_requirement(
+                                &board.record.id,
+                                Some(mapping.number),
+                                vec![format!(
+                                    "field-option-marker-review:{}:{}",
+                                    field.record.id, option.id
+                                )],
+                                "unmapped provider option already carries the canonical Allodium marker; refusing to adopt provider identity implicitly",
+                            ));
+                            return Ok(());
+                        }
+                        if binding.target == "managed" {
+                            update_options = true;
+                        } else {
+                            operations.push(runtime_requirement(
+                                &board.record.id,
+                                Some(mapping.number),
+                                vec![format!("field-option:{}:{}", field.record.id, option.id)],
+                                "existing-target canonical single-select option has no explicit stable provider option identity",
+                            ));
+                            return Ok(());
+                        }
+                    }
                 }
+            }
+            if update_options {
+                operations.push(project_operation(
+                    &board.record.id,
+                    "update_project_field_options",
+                    Some(mapping.number),
+                    vec![format!("field:{}", field.record.id)],
+                    "managed single-select provider schema differs from canonical options; replace the full option schema while preserving every observed provider option identity",
+                ));
+                return Ok(());
             }
         }
     }
@@ -720,6 +804,10 @@ fn canonical_provider_field_type(kind: &str) -> Result<&'static str, String> {
         "single_select" => Ok("SINGLE_SELECT"),
         other => Err(format!("unsupported canonical board field kind {other:?}")),
     }
+}
+
+fn canonical_option_marker(field_id: &str, option_id: &str) -> String {
+    format!("allodium:{field_id}:{option_id}")
 }
 
 fn expected_provider_value(
@@ -1250,6 +1338,48 @@ mod tests {
     }
 
     #[test]
+    fn managed_single_select_addition_plans_preservation_aware_schema_update() {
+        let root = ready_root("option-add", "managed", None);
+        write_project_mapping(&root, true);
+        write_observed_project_fixture(&root);
+        write_provider_state_fixture(&root, true);
+        write_issue_mapping(&root);
+        write_content_identity(&root);
+        let path = root.join(".project/boards/board-0001/fields/status.toml");
+        let mut field = fs::read_to_string(&path).unwrap();
+        field.push_str("\n[[options]]\nid = \"doing\"\nname = \"Doing\"\n");
+        fs::write(path, field).unwrap();
+        let plan = plan_boards(&root, "github").unwrap();
+        assert_eq!(plan.operations.len(), 1);
+        assert_eq!(plan.operations[0].action, "update_project_field_options");
+        assert_eq!(plan.operations[0].fields, vec!["field:status"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn existing_target_option_addition_stays_review_only() {
+        let root = ready_root("option-existing", "existing", Some(7));
+        write_project_mapping(&root, true);
+        write_observed_project_fixture(&root);
+        write_provider_state_fixture(&root, true);
+        write_issue_mapping(&root);
+        write_content_identity(&root);
+        let path = root.join(".project/boards/board-0001/fields/status.toml");
+        let mut field = fs::read_to_string(&path).unwrap();
+        field.push_str("\n[[options]]\nid = \"doing\"\nname = \"Doing\"\n");
+        fs::write(path, field).unwrap();
+        let plan = plan_boards(&root, "github").unwrap();
+        assert_eq!(plan.operations.len(), 1);
+        assert_eq!(plan.operations[0].action, "projects_runtime_required");
+        assert!(
+            plan.operations[0]
+                .fields
+                .contains(&"field-option:status:doing".into())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn managed_board_view_creation_uses_stable_field_bridge_and_ignores_same_name_foreign_view() {
         let root = ready_root("view-create", "managed", None);
         write_project_mapping(&root, true);
@@ -1448,7 +1578,7 @@ mod tests {
                 options: vec![ObservedProviderOption {
                     id: "provider-option".into(),
                     name: "Todo".into(),
-                    description: "allodium:status:active".into(),
+                    description: "allodium:status:todo".into(),
                     color: "BLUE".into(),
                 }],
                 iterations: Vec::new(),

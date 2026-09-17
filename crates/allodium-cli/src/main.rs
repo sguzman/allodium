@@ -361,6 +361,10 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
                 report.project_fields_created
             );
             println!(
+                "updated {} GitHub ProjectV2 single-select option schema(s)",
+                report.project_field_option_schemas_updated
+            );
+            println!(
                 "added {} GitHub ProjectV2 item(s)",
                 report.project_items_added
             );

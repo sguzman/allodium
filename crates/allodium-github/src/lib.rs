@@ -116,6 +116,7 @@ pub struct ApplyReport {
     pub projects_observed: usize,
     pub projects_updated: usize,
     pub project_fields_created: usize,
+    pub project_field_option_schemas_updated: usize,
     pub project_items_added: usize,
     pub project_field_values_updated: usize,
     pub project_views_created: usize,
@@ -799,6 +800,7 @@ impl GitHubAdapter {
                 | "observe_project"
                 | "update_project"
                 | "create_project_field"
+                | "update_project_field_options"
                 | "add_project_item"
                 | "update_project_field_value"
                 | "create_project_view" => {
@@ -815,6 +817,9 @@ impl GitHubAdapter {
                         }
                         project_runtime::ProjectsApplyOutcome::FieldCreated => {
                             report.project_fields_created += 1
+                        }
+                        project_runtime::ProjectsApplyOutcome::FieldOptionsUpdated => {
+                            report.project_field_option_schemas_updated += 1
                         }
                         project_runtime::ProjectsApplyOutcome::ItemAdded => {
                             report.project_items_added += 1
