@@ -82,12 +82,14 @@ The Release vertical slice is complete. Canonical `release-0001` projected to a 
 ## M4 — Broader GitHub surface
 
 - [x] Milestones as first-class canonical objects with live GitHub create/update/close projection, stale-write protection, provider-drift archival/repair, and idempotent dogfood.
-- [ ] Labels as first-class canonical objects.
+- [x] Labels as first-class canonical objects.
 - [ ] Discussions where API semantics are sufficient.
 - [ ] Project/board model after careful ontology work.
 - [ ] Better webhook/event-driven ingress where useful.
 
 The Milestone vertical slice is complete. Canonical `milestone-0001` projected to GitHub Milestone #1, survived deliberate provider-only title drift with preserved before/after evidence and canonical repair, and closed downstream only after canonical state changed to `closed`. Live dogfood also established the GitHub `due_on` boundary: absent canonical due dates omit the provider field, present dates use a deterministic end-of-day UTC representation, and v0 refuses to guess an undocumented null-based due-date clear.
+
+The Label vertical slice is complete. Canonical `label-allodium` projected to GitHub label ID `12237280577`, uses that stable provider ID rather than mutable label name as its mapping anchor, survived a deliberate provider-only rename with preserved before/after evidence, repaired the canonical name through the normal plan/apply path, and converged to a no-op label plan. Because GitHub labels expose no `updated_at` revision, v0 update safety re-lists by stable provider ID and requires exact equality with the last observed managed snapshot before PATCH. Issue↔label membership and destructive label deletion remain intentionally deferred until Allodium canonically owns the affected association semantics.
 
 ## M5 — Second forge
 
