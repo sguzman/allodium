@@ -24,6 +24,38 @@ text = text.replace(
 )
 project.write_text(text)
 
+# Prove observation preserves provider option order for later whole-schema round trips.
+text = project.read_text()
+test_anchor = '''    #[test]
+    fn truncated_view_configuration_is_refused() {
+'''
+observer_test = '''    #[test]
+    fn provider_option_order_is_preserved_for_schema_round_trip() {
+        let value = json!({
+            "__typename": "ProjectV2SingleSelectField",
+            "id": "PVTSSF_status",
+            "databaseId": 101,
+            "name": "Status",
+            "dataType": "SINGLE_SELECT",
+            "updatedAt": "2026-09-17T20:00:00Z",
+            "options": [
+                {"id": "z-option", "name": "Last alphabetically", "description": "foreign-z", "color": "PINK"},
+                {"id": "a-option", "name": "First alphabetically", "description": "foreign-a", "color": "BLUE"}
+            ]
+        });
+        let field = parse_field(&value).unwrap();
+        assert_eq!(
+            field.options.iter().map(|option| option.id.as_str()).collect::<Vec<_>>(),
+            vec!["z-option", "a-option"]
+        );
+    }
+
+'''
+if test_anchor not in text:
+    raise SystemExit("observer option-order test anchor not found")
+text = text.replace(test_anchor, observer_test + test_anchor, 1)
+project.write_text(text)
+
 # Planner: managed option additions/drift become one schema mutation; existing targets and missing identities stay review-only.
 core = Path("crates/allodium-core/src/github_project.rs")
 text = core.read_text()
