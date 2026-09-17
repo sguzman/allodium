@@ -1,0 +1,34 @@
+name: M4 label drift probe
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rename mapped label outside Allodium
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body -L \
+            -X PATCH \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/sguzman/allodium/labels/allodium \
+            -d '{"new_name":"provider-drift-m4-label-dogfood"}' \
+            > /tmp/label.json
+          python - <<'PY'
+          import json
+          with open('/tmp/label.json', encoding='utf-8') as f:
+              label = json.load(f)
+          assert label['id'] == 12237280577, label
+          assert label['name'] == 'provider-drift-m4-label-dogfood', label
+          print('provider-only rename accepted for stable label id', label['id'])
+          PY
