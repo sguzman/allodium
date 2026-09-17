@@ -1,0 +1,66 @@
+name: M4 Projects view runtime gate
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+
+      - name: Materialize ProjectV2 view runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/m4-projects-view-runtime.py
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/projects-view-plan.toml
+          cat /tmp/projects-view-plan.toml
+          grep -q 'action = "projects_auth_required"' /tmp/projects-view-plan.toml
+          if grep -Eq 'action = "(create_project|bind_project|update_project|create_project_field|add_project_item|update_project_field_value|create_project_view)"' /tmp/projects-view-plan.toml; then
+            echo 'no-token repository plan unexpectedly contains ProjectV2 mutable work' >&2
+            exit 1
+          fi
+
+      - name: Publish clean ProjectV2 view runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Allodium implementation gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/m4-projects-view-runtime.yml
+          git rm .github/m4-projects-view-runtime.py
+          git add crates/allodium-core/src/github_project.rs
+          git add crates/allodium-github/src/project_runtime.rs
+          git add crates/allodium-github/src/lib.rs
+          git add crates/allodium-cli/src/main.rs
+          git add docs/github-projects-provider-v0.md
+          git commit -m 'feat(github): create lossless ProjectV2 views'
+          git fetch origin main
+          git rebase origin/main
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/rebased-projects-view-plan.toml
+          grep -q 'action = "projects_auth_required"' /tmp/rebased-projects-view-plan.toml
+          if grep -Eq 'action = "(create_project|bind_project|update_project|create_project_field|add_project_item|update_project_field_value|create_project_view)"' /tmp/rebased-projects-view-plan.toml; then
+            echo 'rebased no-token repository plan unexpectedly contains ProjectV2 mutable work' >&2
+            exit 1
+          fi
+          git push origin HEAD:main
