@@ -1,5 +1,6 @@
 pub mod discussion;
 pub mod github;
+pub mod github_discussion;
 pub mod github_label;
 pub mod github_milestone;
 pub mod github_release;

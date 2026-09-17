@@ -288,8 +288,11 @@ pub fn write_observed_discussion_capabilities(
         ));
     }
     let path = observed_discussion_capabilities_path(root.as_ref(), remote_name);
-    fs::create_dir_all(path.parent().expect("discussion capability path has parent"))
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+    fs::create_dir_all(
+        path.parent()
+            .expect("discussion capability path has parent"),
+    )
+    .map_err(|error| format!("{}: {error}", path.display()))?;
     let text = toml::to_string_pretty(observed)
         .map_err(|error| format!("could not serialize GitHub Discussion capabilities: {error}"))?;
     fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))
@@ -317,8 +320,8 @@ pub fn load_observed_discussion(
             OBSERVED_DISCUSSION_SCHEMA_V0
         ));
     }
-    let body =
-        fs::read_to_string(&body_path).map_err(|error| format!("{}: {error}", body_path.display()))?;
+    let body = fs::read_to_string(&body_path)
+        .map_err(|error| format!("{}: {error}", body_path.display()))?;
     Ok(Some(ObservedDiscussionSnapshot { record, body }))
 }
 
@@ -333,10 +336,16 @@ pub fn write_observed_discussion_snapshot(
             snapshot.record.schema
         ));
     }
-    let record_path = observed_discussion_path(root.as_ref(), remote_name, &snapshot.record.canonical_id);
-    let body_path = observed_discussion_body_path(root.as_ref(), remote_name, &snapshot.record.canonical_id);
-    fs::create_dir_all(record_path.parent().expect("observed discussion path has parent"))
-        .map_err(|error| format!("{}: {error}", record_path.display()))?;
+    let record_path =
+        observed_discussion_path(root.as_ref(), remote_name, &snapshot.record.canonical_id);
+    let body_path =
+        observed_discussion_body_path(root.as_ref(), remote_name, &snapshot.record.canonical_id);
+    fs::create_dir_all(
+        record_path
+            .parent()
+            .expect("observed discussion path has parent"),
+    )
+    .map_err(|error| format!("{}: {error}", record_path.display()))?;
     let text = toml::to_string_pretty(&snapshot.record)
         .map_err(|error| format!("could not serialize observed GitHub Discussion: {error}"))?;
     fs::write(&record_path, text).map_err(|error| format!("{}: {error}", record_path.display()))?;
@@ -377,7 +386,12 @@ fn plan_discussion(
             canonical_id: canonical_id.clone(),
             action: "create_discussion".into(),
             number: None,
-            fields: vec!["title".into(), "body".into(), "state".into(), "category".into()],
+            fields: vec![
+                "title".into(),
+                "body".into(),
+                "state".into(),
+                "category".into(),
+            ],
             reason: "canonical discussion has no GitHub Discussion mapping".into(),
         });
         return Ok(());
@@ -456,7 +470,9 @@ fn plan_discussion(
             action: action.into(),
             number: Some(mapping.number),
             fields: vec!["state".into()],
-            reason: "canonical Discussion state differs from the last observed GitHub Discussion state".into(),
+            reason:
+                "canonical Discussion state differs from the last observed GitHub Discussion state"
+                    .into(),
         });
     }
 
@@ -541,7 +557,11 @@ mod tests {
     #[test]
     fn unmapped_discussion_plans_create_after_capability_resolution() {
         let root = test_project("create", true, true);
-        save_capabilities(&root, true, &[category("general", "General", "DIC_general")]);
+        save_capabilities(
+            &root,
+            true,
+            &[category("general", "General", "DIC_general")],
+        );
         let plan = plan_discussions(&root, "github").unwrap();
         assert_eq!(plan.operations.len(), 1);
         assert_eq!(plan.operations[0].action, "create_discussion");
@@ -551,7 +571,11 @@ mod tests {
     #[test]
     fn mapped_discussion_without_observation_plans_observe() {
         let root = test_project("observe", true, true);
-        save_capabilities(&root, true, &[category("general", "General", "DIC_general")]);
+        save_capabilities(
+            &root,
+            true,
+            &[category("general", "General", "DIC_general")],
+        );
         save_mapping(&root, "general", "DIC_general");
         let plan = plan_discussions(&root, "github").unwrap();
         assert_eq!(plan.operations.len(), 1);
@@ -563,9 +587,19 @@ mod tests {
     #[test]
     fn matching_discussion_is_idempotent() {
         let root = test_project("idempotent", true, true);
-        save_capabilities(&root, true, &[category("general", "General", "DIC_general")]);
+        save_capabilities(
+            &root,
+            true,
+            &[category("general", "General", "DIC_general")],
+        );
         save_mapping(&root, "general", "DIC_general");
-        save_observation(&root, "Allodium project discussion", "Discussion body\n", "open", "DIC_general");
+        save_observation(
+            &root,
+            "Allodium project discussion",
+            "Discussion body\n",
+            "open",
+            "DIC_general",
+        );
         let plan = plan_discussions(&root, "github").unwrap();
         assert!(plan.operations.is_empty());
         fs::remove_dir_all(root).unwrap();
@@ -574,9 +608,19 @@ mod tests {
     #[test]
     fn canonical_fields_and_state_plan_separate_mutations() {
         let root = test_project("drift", true, true);
-        save_capabilities(&root, true, &[category("general", "General", "DIC_general")]);
+        save_capabilities(
+            &root,
+            true,
+            &[category("general", "General", "DIC_general")],
+        );
         save_mapping(&root, "general", "DIC_general");
-        save_observation(&root, "Provider title", "Provider body\n", "closed", "DIC_general");
+        save_observation(
+            &root,
+            "Provider title",
+            "Provider body\n",
+            "closed",
+            "DIC_general",
+        );
         let plan = plan_discussions(&root, "github").unwrap();
         assert_eq!(plan.operations.len(), 2);
         assert_eq!(plan.operations[0].action, "update_discussion");
@@ -587,7 +631,11 @@ mod tests {
     #[test]
     fn configuration_cannot_reclassify_mapped_discussion() {
         let root = test_project("config-reclassify", true, true);
-        save_capabilities(&root, true, &[category("general", "General", "DIC_general")]);
+        save_capabilities(
+            &root,
+            true,
+            &[category("general", "General", "DIC_general")],
+        );
         save_mapping(&root, "support", "DIC_general");
         let plan = plan_discussions(&root, "github").unwrap();
         assert_eq!(plan.operations.len(), 1);
@@ -601,9 +649,19 @@ mod tests {
     #[test]
     fn provider_category_drift_blocks_automatic_repair() {
         let root = test_project("category-drift", true, true);
-        save_capabilities(&root, true, &[category("general", "General", "DIC_general")]);
+        save_capabilities(
+            &root,
+            true,
+            &[category("general", "General", "DIC_general")],
+        );
         save_mapping(&root, "general", "DIC_general");
-        save_observation(&root, "Allodium project discussion", "Discussion body\n", "open", "DIC_other");
+        save_observation(
+            &root,
+            "Allodium project discussion",
+            "Discussion body\n",
+            "open",
+            "DIC_other",
+        );
         let plan = plan_discussions(&root, "github").unwrap();
         assert_eq!(plan.operations.len(), 1);
         assert_eq!(
