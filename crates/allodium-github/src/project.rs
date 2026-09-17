@@ -12,8 +12,8 @@ use allodium_core::github_project_observation::{
     OBSERVED_PROJECT_PROVIDER_STATE_SCHEMA_V0, ObservedProjectProviderState,
     ObservedProviderContent, ObservedProviderField, ObservedProviderFieldValue,
     ObservedProviderItem, ObservedProviderIteration, ObservedProviderOption, ObservedProviderView,
-    archive_project_provider_change, load_observed_project_provider_state,
-    write_observed_project_provider_state,
+    ObservedProviderViewSort, archive_project_provider_change,
+    load_observed_project_provider_state, write_observed_project_provider_state,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -392,10 +392,13 @@ fn project_selection() -> &'static str {
         fields(first: 100) {
           nodes {
             __typename
-            ... on ProjectV2Field { id name dataType updatedAt }
-            ... on ProjectV2SingleSelectField { id name dataType updatedAt options { id name } }
+            ... on ProjectV2Field { id databaseId name dataType updatedAt }
+            ... on ProjectV2SingleSelectField {
+              id databaseId name dataType updatedAt
+              options { id name description color }
+            }
             ... on ProjectV2IterationField {
-              id name dataType updatedAt
+              id databaseId name dataType updatedAt
               configuration {
                 iterations { id title startDate duration }
                 completedIterations { id title startDate duration }
@@ -405,7 +408,28 @@ fn project_selection() -> &'static str {
           pageInfo { hasNextPage }
         }
         views(first: 100) {
-          nodes { id number name layout filter }
+          nodes {
+            id fullDatabaseId number name layout filter updatedAt
+            fields(first: 100) {
+              nodes { ... on ProjectV2FieldCommon { id } }
+              pageInfo { hasNextPage }
+            }
+            groupByFields(first: 100) {
+              nodes { ... on ProjectV2FieldCommon { id } }
+              pageInfo { hasNextPage }
+            }
+            verticalGroupByFields(first: 100) {
+              nodes { ... on ProjectV2FieldCommon { id } }
+              pageInfo { hasNextPage }
+            }
+            sortByFields(first: 100) {
+              nodes {
+                direction
+                field { ... on ProjectV2FieldCommon { id } }
+              }
+              pageInfo { hasNextPage }
+            }
+          }
           pageInfo { hasNextPage }
         }
         items(first: 100) {
@@ -606,6 +630,8 @@ fn parse_field(value: &Value) -> Result<ObservedProviderField, String> {
             Ok(ObservedProviderOption {
                 id: required_string(option, "id")?,
                 name: required_string(option, "name")?,
+                description: required_string(option, "description")?,
+                color: required_string(option, "color")?,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -638,6 +664,7 @@ fn parse_field(value: &Value) -> Result<ObservedProviderField, String> {
         provider_type,
         name: required_string(value, "name")?,
         data_type: required_string(value, "dataType")?,
+        provider_database_id: value.get("databaseId").and_then(Value::as_i64),
         remote_updated_at: required_string(value, "updatedAt")?,
         options,
         iterations,
@@ -645,15 +672,73 @@ fn parse_field(value: &Value) -> Result<ObservedProviderField, String> {
 }
 
 fn parse_view(value: &Value) -> Result<ObservedProviderView, String> {
+    let visible_field_node_ids = parse_view_field_connection(value.get("fields"), "view fields")?;
+    let group_by_field_node_ids =
+        parse_view_field_connection(value.get("groupByFields"), "view groupByFields")?;
+    let vertical_group_by_field_node_ids = parse_view_field_connection(
+        value.get("verticalGroupByFields"),
+        "view verticalGroupByFields",
+    )?;
+    reject_truncated_connection(value.get("sortByFields"), "view sortByFields")?;
+    let sort_by = value
+        .pointer("/sortByFields/nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| !entry.is_null())
+        .map(|entry| {
+            Ok(ObservedProviderViewSort {
+                field_node_id: entry
+                    .pointer("/field/id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "ProjectV2 view sort entry is missing field.id".to_string())?
+                    .into(),
+                direction: required_string(entry, "direction")?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(ObservedProviderView {
         node_id: required_string(value, "id")?,
         number: required_u64(value, "number")?,
+        full_database_id: optional_bigint_string(value.get("fullDatabaseId")),
         name: required_string(value, "name")?,
         layout: required_string(value, "layout")?,
         filter: value
             .get("filter")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        remote_updated_at: required_string(value, "updatedAt")?,
+        visible_field_node_ids,
+        group_by_field_node_ids,
+        vertical_group_by_field_node_ids,
+        sort_by,
+    })
+}
+
+fn parse_view_field_connection(value: Option<&Value>, name: &str) -> Result<Vec<String>, String> {
+    reject_truncated_connection(value, name)?;
+    value
+        .and_then(|connection| connection.get("nodes"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|node| !node.is_null())
+        .map(|node| {
+            node.get("id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| format!("GitHub ProjectV2 {name} entry is missing id"))
+        })
+        .collect()
+}
+
+fn optional_bigint_string(value: Option<&Value>) -> Option<String> {
+    value.and_then(|value| {
+        value
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| value.as_i64().map(|number| number.to_string()))
+            .or_else(|| value.as_u64().map(|number| number.to_string()))
     })
 }
 
@@ -918,6 +1003,23 @@ mod tests {
                 .iter()
                 .any(|iteration| iteration.id == "iteration-1")
         );
+        let status = snapshot
+            .fields
+            .iter()
+            .find(|field| field.node_id == "PVTSSF_status")
+            .unwrap();
+        assert_eq!(status.provider_database_id, Some(101));
+        assert_eq!(status.options[0].description, "provider-owned option");
+        assert_eq!(status.options[0].color, "BLUE");
+        let view = &snapshot.views[0];
+        assert_eq!(view.full_database_id.as_deref(), Some("9007199254740993"));
+        assert_eq!(view.vertical_group_by_field_node_ids, vec!["PVTSSF_status"]);
+        assert_eq!(
+            view.visible_field_node_ids,
+            vec!["PVTSSF_status", "PVTIF_iteration"]
+        );
+        assert_eq!(view.sort_by[0].field_node_id, "PVTIF_iteration");
+        assert_eq!(view.sort_by[0].direction, "ASC");
         assert!(!root.join(".project/issues/provider-draft").exists());
         fs::remove_dir_all(root).unwrap();
     }
@@ -956,6 +1058,20 @@ mod tests {
         let events = walk_named(&incoming, "event.toml");
         assert_eq!(events, 1);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn truncated_view_configuration_is_refused() {
+        let project = provider_project_json("Todo", "Draft", "2026-09-17T20:00:00Z");
+        let mut value: Value = serde_json::from_str(&project).unwrap();
+        *value
+            .pointer_mut(
+                "/data/user/projectV2/views/nodes/0/verticalGroupByFields/pageInfo/hasNextPage",
+            )
+            .unwrap() = Value::Bool(true);
+        let error = parse_project(value.pointer("/data/user/projectV2").unwrap()).unwrap_err();
+        assert!(error.contains("verticalGroupByFields"));
+        assert!(error.contains("silently truncated"));
     }
 
     #[test]
@@ -1016,14 +1132,21 @@ mod tests {
                                 {
                                     "__typename": "ProjectV2SingleSelectField",
                                     "id": "PVTSSF_status",
+                                    "databaseId": 101,
                                     "name": "Status",
                                     "dataType": "SINGLE_SELECT",
                                     "updatedAt": updated_at,
-                                    "options": [{ "id": "option-1", "name": option_name }]
+                                    "options": [{
+                                        "id": "option-1",
+                                        "name": option_name,
+                                        "description": "provider-owned option",
+                                        "color": "BLUE"
+                                    }]
                                 },
                                 {
                                     "__typename": "ProjectV2IterationField",
                                     "id": "PVTIF_iteration",
+                                    "databaseId": 102,
                                     "name": "Iteration",
                                     "dataType": "ITERATION",
                                     "updatedAt": updated_at,
@@ -1036,7 +1159,31 @@ mod tests {
                             "pageInfo": { "hasNextPage": false }
                         },
                         "views": {
-                            "nodes": [{ "id": "PVTV_view", "number": 1, "name": "Board", "layout": "BOARD_LAYOUT", "filter": "" }],
+                            "nodes": [{
+                                "id": "PVTV_view",
+                                "fullDatabaseId": "9007199254740993",
+                                "number": 1,
+                                "name": "Board",
+                                "layout": "BOARD_LAYOUT",
+                                "filter": "",
+                                "updatedAt": updated_at,
+                                "fields": {
+                                    "nodes": [{ "id": "PVTSSF_status" }, { "id": "PVTIF_iteration" }],
+                                    "pageInfo": { "hasNextPage": false }
+                                },
+                                "groupByFields": {
+                                    "nodes": [],
+                                    "pageInfo": { "hasNextPage": false }
+                                },
+                                "verticalGroupByFields": {
+                                    "nodes": [{ "id": "PVTSSF_status" }],
+                                    "pageInfo": { "hasNextPage": false }
+                                },
+                                "sortByFields": {
+                                    "nodes": [{ "direction": "ASC", "field": { "id": "PVTIF_iteration" } }],
+                                    "pageInfo": { "hasNextPage": false }
+                                }
+                            }],
                             "pageInfo": { "hasNextPage": false }
                         },
                         "items": {

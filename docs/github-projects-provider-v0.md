@@ -34,3 +34,17 @@ When the separately configured Projects credential authenticates the explicit ow
 A changed provider snapshot archives both the previous and current observations under the GitHub remote `incoming/` namespace before the current observation is replaced. Re-observing semantically identical state is idempotent. Project connections are capped at 100 objects in v0; if GitHub reports another page, observation fails rather than silently persisting a truncated snapshot.
 
 Ordinary mapped issue and pull-request observations also persist their GitHub GraphQL node IDs when those canonical objects belong to an enabled Allodium board. This supplies the stable content identity required for later ProjectV2 item membership without requiring Project authorization merely to learn repository-object identity.
+
+## Provider schema-preservation boundary
+
+ProjectV2 schema mutation is intentionally narrower than provider observation. Allodium now preserves enough provider-only schema detail to make a later mutation decision without reconstructing identity from display names or discarding foreign state:
+
+- single-select option ID, name, description, and color;
+- custom-field GraphQL node ID plus the provider database ID as non-authoritative bridge evidence;
+- view node ID, number, full database ID, update revision, visible field IDs, horizontal group-by field IDs, vertical group-by field IDs, and ordered sort field/direction pairs.
+
+GraphQL node IDs remain the stable provider identities. Numeric/full database IDs are evidence for provider API bridges only and must never replace node IDs as mapping authority.
+
+The distinction matters because GitHub's GraphQL view mutation input can configure visible field IDs but does not expose the richer grouping/sort shape that canonical Allodium views may require. GitHub's REST Project-view surface can express group-by, vertical-group-by, visible fields, and sorting, but it uses database identifiers and has owner/credential-specific support. A canonical board view therefore must not be declared projected merely because a same-named GitHub view exists or because a partial GraphQL view was created. In particular, Allodium's canonical board `group_by` describes kanban columns and must round-trip to the provider's vertical grouping semantics; the canonical roadmap start/end-field semantics must remain deferred until an audited provider mutation can represent them without loss.
+
+Single-select option evolution has a similar whole-schema hazard. GitHub's field-update mutation treats the submitted option list as replacement configuration, and existing provider option IDs must be supplied to preserve option identity and item values. Allodium therefore observes the complete option identity/details before any option-schema update is allowed. Foreign provider options are evidence, not canonical options, and canonical option absence has no deletion meaning in v0.

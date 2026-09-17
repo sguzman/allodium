@@ -1310,10 +1310,13 @@ mod tests {
                 provider_type: "ProjectV2SingleSelectField".into(),
                 name: "Status".into(),
                 data_type: "SINGLE_SELECT".into(),
+                provider_database_id: Some(101),
                 remote_updated_at: "2026-09-17T00:00:00Z".into(),
                 options: vec![ObservedProviderOption {
                     id: "provider-option".into(),
                     name: "Todo".into(),
+                    description: "allodium:status:active".into(),
+                    color: "BLUE".into(),
                 }],
                 iterations: Vec::new(),
             }]
@@ -1349,9 +1352,15 @@ mod tests {
             vec![ObservedProviderView {
                 node_id: "PVTV_view".into(),
                 number: 1,
+                full_database_id: Some("201".into()),
                 name: "Development".into(),
                 layout: "BOARD_LAYOUT".into(),
                 filter: None,
+                remote_updated_at: "2026-09-17T00:00:00Z".into(),
+                visible_field_node_ids: vec!["PVTF_field".into()],
+                group_by_field_node_ids: Vec::new(),
+                vertical_group_by_field_node_ids: vec!["PVTF_field".into()],
+                sort_by: Vec::new(),
             }]
         } else {
             Vec::new()

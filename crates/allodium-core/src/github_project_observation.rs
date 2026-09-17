@@ -10,6 +10,10 @@ pub const PROJECT_PROVIDER_CHANGE_SCHEMA_V0: &str = "allodium.github.project-pro
 pub struct ObservedProviderOption {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub color: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,6 +31,8 @@ pub struct ObservedProviderField {
     pub provider_type: String,
     pub name: String,
     pub data_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_database_id: Option<i64>,
     pub remote_updated_at: String,
     #[serde(default)]
     pub options: Vec<ObservedProviderOption>,
@@ -71,13 +77,31 @@ pub struct ObservedProviderItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ObservedProviderViewSort {
+    pub field_node_id: String,
+    pub direction: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ObservedProviderView {
     pub node_id: String,
     pub number: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_database_id: Option<String>,
     pub name: String,
     pub layout: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
+    #[serde(default)]
+    pub remote_updated_at: String,
+    #[serde(default)]
+    pub visible_field_node_ids: Vec<String>,
+    #[serde(default)]
+    pub group_by_field_node_ids: Vec<String>,
+    #[serde(default)]
+    pub vertical_group_by_field_node_ids: Vec<String>,
+    #[serde(default)]
+    pub sort_by: Vec<ObservedProviderViewSort>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -285,10 +309,13 @@ mod tests {
                 provider_type: "ProjectV2SingleSelectField".into(),
                 name: "Status".into(),
                 data_type: "SINGLE_SELECT".into(),
+                provider_database_id: Some(101),
                 remote_updated_at: "2026-09-17T19:59:00Z".into(),
                 options: vec![ObservedProviderOption {
                     id: "option-1".into(),
                     name: option_name.into(),
+                    description: "provider-owned description".into(),
+                    color: "BLUE".into(),
                 }],
                 iterations: Vec::new(),
             }],
