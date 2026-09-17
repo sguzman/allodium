@@ -1,0 +1,70 @@
+name: M4 GitHub event wakeup contract gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/m4-event-wakeups.b64.*'
+      - '.github/workflows/m4-event-wakeups.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+
+      - name: Materialize and verify event wakeup contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/m4-event-wakeups.b64.* | base64 -d > /tmp/m4-event-wakeups.py
+          python /tmp/m4-event-wakeups.py
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/event-wakeup-plan.toml
+          cat /tmp/event-wakeup-plan.toml
+          grep -q 'action = "projects_auth_required"' /tmp/event-wakeup-plan.toml
+          grep -q 'action = "wiki_bootstrap_required"' /tmp/event-wakeup-plan.toml
+          grep -q 'action = "discussions_bootstrap_required"' /tmp/event-wakeup-plan.toml
+
+      - name: Publish clean product after rebase
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Allodium implementation gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/m4-event-wakeups.yml
+          git rm .github/m4-event-wakeups.b64.*
+          git add .project/remotes/github/event-wakeups.toml
+          git add crates/allodium-core/src/github_event.rs
+          git add crates/allodium-core/src/lib.rs
+          git add .github/workflows/allodium-sync.yml
+          git add docs/github-event-wakeups-v0.md
+          ! compgen -G '.github/m4-event-wakeups.b64.*' > /dev/null
+          test ! -e .github/workflows/m4-event-wakeups.yml
+          git commit -m 'feat(github): define event wakeup contract'
+          git fetch origin main
+          git rebase origin/main
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/rebased-event-wakeup-plan.toml
+          grep -q 'action = "projects_auth_required"' /tmp/rebased-event-wakeup-plan.toml
+          grep -q 'action = "wiki_bootstrap_required"' /tmp/rebased-event-wakeup-plan.toml
+          grep -q 'action = "discussions_bootstrap_required"' /tmp/rebased-event-wakeup-plan.toml
+          ! compgen -G '.github/m4-event-wakeups.b64.*' > /dev/null
+          test ! -e .github/workflows/m4-event-wakeups.yml
+          git push origin HEAD:main
