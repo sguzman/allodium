@@ -19,7 +19,7 @@ GitHub's Discussions API is GraphQL-first. Creating a Discussion requires a repo
 - [x] Implement create/update/close/reopen for the canonical root Discussion through the normal inspectable plan/apply path.
 - [x] Use optimistic stale-state refusal before mutable provider writes.
 - [x] Archive provider-side changes to managed root fields before advancing reconstructible observation.
-- [ ] Preserve comments, replies, answers, locks, reactions/votes, authorship, and other GitHub-local social state as provider-scoped evidence; do not impersonate or silently promote it into canonical authorship.
+- [x] Preserve comments, replies, answers, locks, reactions/votes, authorship, and other GitHub-local social state as provider-scoped evidence; do not impersonate or silently promote it into canonical authorship.
 - [x] Do not implement destructive Discussion deletion in v0; canonical absence must not erase provider conversation history.
 - [x] Explicitly document whether category changes are managed projection fields or immutable-after-create for v0 before live mutation is enabled.
 - [x] Add capability-aware tests for `has_discussions = false` and category-resolution failure.
@@ -33,7 +33,13 @@ The repository capability boundary has been exercised live. Permanent reconcilia
 
 The full root runtime is now implemented and gated offline behind that live capability boundary. It supports `createDiscussion`, managed title/body updates, `closeDiscussion`, `reopenDiscussion`, mapped observation, and reconstructible snapshots. Before mutable writes it re-queries the mapped Discussion and refuses stale plans when provider revision or managed root state changed. Managed provider changes to title, body, state, or category are archived with before/after snapshots before observation advances. Category drift is archived but deliberately not repaired automatically. There is no destructive Discussion deletion path.
 
-The full runtime gate passed rustfmt, the locked workspace test suite, repository validation, fake-provider stale-write and category-drift tests, and a real-repository plan smoke that required `discussions_bootstrap_required` while forbidding `create_discussion`. Live create/update/close/reopen dogfood remains blocked only by the provider feature being disabled.
+Provider social-state archival is also implemented as an isolated GitHub evidence stream. `allodium.github.discussion-social/v0` snapshots preserve root and comment authorship, editors, author associations, comments and replies, selected answers, locks/state reasons, upvote counts, reactions, polls and vote totals, minimization/deletion metadata, timestamps, and provider identities without making any of them canonical Allodium authorship or cross-forge state. Snapshot ordering is normalized and unchanged re-observation is idempotent; changed snapshots append incoming provenance before the reconstructible current snapshot advances.
+
+The social-ingress gate passed rustfmt, the complete locked workspace suite, repository validation, idempotence and ordering-normalization tests, and the same real-repository safety smoke requiring `discussions_bootstrap_required` while forbidding `create_discussion`. The implementation is therefore ready behind the capability boundary, but live social-state dogfood remains impossible while GitHub Discussions are disabled.
+
+The permanent GitHub sync workflow is intended to react to both Discussion-root and Discussion-comment events once the provider feature is available. GitHub-local activity still flows through normal observe/archive/reconcile behavior rather than becoming canonical state from webhook payloads.
+
+Live create/update/close/reopen and adversarial provider-drift dogfood remains blocked only by the provider feature being disabled. `issue-0010` stays open until that provider acceptance proof can be performed.
 
 ## Non-goals for this slice
 
