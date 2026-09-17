@@ -162,6 +162,14 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
                 report.discussion_capabilities_observed
             );
             println!(
+                "observed {} mapped GitHub Discussion(s)",
+                report.discussions_observed
+            );
+            println!(
+                "archived {} GitHub Discussion managed-field remote change(s)",
+                report.discussion_managed_changes_archived
+            );
+            println!(
                 "archived {} GitHub Wiki remote-tree change(s)",
                 report.wiki_remote_changes_archived
             );
@@ -260,8 +268,41 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
                 report.discussion_capabilities_observed
             );
             println!(
+                "created {} GitHub Discussion(s)",
+                report.discussions_created
+            );
+            println!(
+                "updated {} GitHub Discussion(s)",
+                report.discussions_updated
+            );
+            println!(
+                "observed {} GitHub Discussion(s)",
+                report.discussions_observed
+            );
+            println!("closed {} GitHub Discussion(s)", report.discussions_closed);
+            println!(
+                "reopened {} GitHub Discussion(s)",
+                report.discussions_reopened
+            );
+            println!(
                 "{} GitHub Discussion projection(s) require provider bootstrap",
                 report.discussions_bootstrap_required
+            );
+            println!(
+                "{} GitHub Discussion projection(s) require projection configuration",
+                report.discussion_config_required
+            );
+            println!(
+                "{} GitHub Discussion projection(s) require a configured provider category",
+                report.discussion_category_required
+            );
+            println!(
+                "{} GitHub Discussion projection(s) have provider category drift requiring review",
+                report.discussion_category_review_required
+            );
+            println!(
+                "{} GitHub Discussion projection(s) request unsupported category reclassification",
+                report.discussion_category_change_unsupported
             );
             ExitCode::SUCCESS
         }

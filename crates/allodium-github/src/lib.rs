@@ -55,6 +55,8 @@ pub struct ObserveReport {
     pub labels_observed: usize,
     pub label_managed_changes_archived: usize,
     pub discussion_capabilities_observed: usize,
+    pub discussions_observed: usize,
+    pub discussion_managed_changes_archived: usize,
     pub review_conversation_comment_snapshots_archived: usize,
     pub review_submission_snapshots_archived: usize,
     pub review_inline_comment_snapshots_archived: usize,
@@ -89,7 +91,16 @@ pub struct ApplyReport {
     pub labels_updated: usize,
     pub labels_observed: usize,
     pub discussion_capabilities_observed: usize,
+    pub discussions_created: usize,
+    pub discussions_updated: usize,
+    pub discussions_observed: usize,
+    pub discussions_closed: usize,
+    pub discussions_reopened: usize,
     pub discussions_bootstrap_required: usize,
+    pub discussion_config_required: usize,
+    pub discussion_category_required: usize,
+    pub discussion_category_review_required: usize,
+    pub discussion_category_change_unsupported: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -364,6 +375,8 @@ impl GitHubAdapter {
 
         let discussion_report = discussion::observe_discussions(self, root, remote_name)?;
         report.discussion_capabilities_observed += discussion_report.capabilities_observed;
+        report.discussions_observed += discussion_report.observed;
+        report.discussion_managed_changes_archived += discussion_report.managed_changes_archived;
 
         for issue in self.fetch_repository_issues()? {
             if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
@@ -652,8 +665,74 @@ impl GitHubAdapter {
                     discussion::apply_observe_discussion_capabilities(self, root, &plan.remote)?;
                     report.discussion_capabilities_observed += 1;
                 }
+                "discussion_config_required" => {
+                    report.discussion_config_required += 1;
+                }
+                "discussion_category_required" => {
+                    report.discussion_category_required += 1;
+                }
+                "discussion_category_drift_requires_review" => {
+                    report.discussion_category_review_required += 1;
+                }
+                "discussion_category_change_unsupported" => {
+                    report.discussion_category_change_unsupported += 1;
+                }
                 "discussions_bootstrap_required" => {
                     report.discussions_bootstrap_required += 1;
+                }
+                "create_discussion" => {
+                    discussion::apply_create_discussion(
+                        self,
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                    )?;
+                    report.discussions_created += 1;
+                }
+                "observe_discussion" => {
+                    let number = require_number(operation)?;
+                    discussion::apply_observe_discussion(
+                        self,
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        number,
+                    )?;
+                    report.discussions_observed += 1;
+                }
+                "update_discussion" => {
+                    let number = require_number(operation)?;
+                    discussion::apply_update_discussion(
+                        self,
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        number,
+                        &operation.fields,
+                    )?;
+                    report.discussions_updated += 1;
+                }
+                "close_discussion" => {
+                    let number = require_number(operation)?;
+                    discussion::apply_close_discussion(
+                        self,
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        number,
+                    )?;
+                    report.discussions_closed += 1;
+                }
+                "reopen_discussion" => {
+                    let number = require_number(operation)?;
+                    discussion::apply_reopen_discussion(
+                        self,
+                        root,
+                        &plan.remote,
+                        &operation.canonical_id,
+                        number,
+                    )?;
+                    report.discussions_reopened += 1;
                 }
                 "observe_wiki" => {
                     let wiki_report = wiki::observe_wiki(self, root, &plan.remote)?;
