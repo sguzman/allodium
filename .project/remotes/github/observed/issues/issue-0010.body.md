@@ -15,21 +15,25 @@ GitHub's Discussions API is GraphQL-first. Creating a Discussion requires a repo
 - [x] Refuse projection when Discussions are disabled instead of silently enabling the provider feature.
 - [x] Refuse creation when no configured/compatible category can be resolved; do not guess the first GitHub category.
 - [x] Make planning deterministic and network-free from canonical state plus persisted mappings/observations/configuration.
-- [ ] Persist observed Discussion title, body, state, category identity, node ID, number, URL, and provider revision metadata needed for safe reconciliation.
-- [ ] Implement create/update/close/reopen for the canonical root Discussion through the normal inspectable plan/apply path.
-- [ ] Use optimistic stale-state refusal before mutable provider writes.
-- [ ] Archive provider-side changes to managed root fields before advancing reconstructible observation.
+- [x] Persist observed Discussion title, body, state, category identity, node ID, number, URL, and provider revision metadata needed for safe reconciliation.
+- [x] Implement create/update/close/reopen for the canonical root Discussion through the normal inspectable plan/apply path.
+- [x] Use optimistic stale-state refusal before mutable provider writes.
+- [x] Archive provider-side changes to managed root fields before advancing reconstructible observation.
 - [ ] Preserve comments, replies, answers, locks, reactions/votes, authorship, and other GitHub-local social state as provider-scoped evidence; do not impersonate or silently promote it into canonical authorship.
 - [x] Do not implement destructive Discussion deletion in v0; canonical absence must not erase provider conversation history.
 - [x] Explicitly document whether category changes are managed projection fields or immutable-after-create for v0 before live mutation is enabled.
 - [x] Add capability-aware tests for `has_discussions = false` and category-resolution failure.
 - [ ] If provider bootstrap is completed, dogfood one canonical Discussion through create, provider drift archival/repair, close/reopen semantics, and idempotent re-observation.
 
-## Implemented boundary so far
+## Implemented boundary
 
 Canonical `discussion-0001` is ordinary filesystem state, while its GitHub category selector is remote configuration under `.project/remotes/github/discussions.toml`. The offline planner freezes the resolved provider category node ID into the remote mapping on first creation and refuses later configuration changes that would silently reclassify a mapped conversation. Provider category drift is observable provider taxonomy rather than canonical Discussion meaning.
 
-The safe runtime bridge is now landed: normal GitHub observation can persist repository Discussion capability/category snapshots, the combined planner can emit `observe_discussion_capabilities`, and apply understands both capability observation and the non-mutating `discussions_bootstrap_required` operation. No Discussion create/update GraphQL mutation is enabled yet. The next live acceptance is that the current repository (`has_discussions = false`) converges to the explicit bootstrap requirement without attempting creation.
+The repository capability boundary has been exercised live. Permanent reconciliation observed `has_discussions = false`, persisted `allodium.github.observed-discussion-capabilities/v0` with the repository node ID and an empty category inventory, planned `discussions_bootstrap_required`, applied it as a non-mutating provider requirement, re-observed successfully, and performed no Discussion creation. Allodium therefore does not silently enable GitHub Discussions.
+
+The full root runtime is now implemented and gated offline behind that live capability boundary. It supports `createDiscussion`, managed title/body updates, `closeDiscussion`, `reopenDiscussion`, mapped observation, and reconstructible snapshots. Before mutable writes it re-queries the mapped Discussion and refuses stale plans when provider revision or managed root state changed. Managed provider changes to title, body, state, or category are archived with before/after snapshots before observation advances. Category drift is archived but deliberately not repaired automatically. There is no destructive Discussion deletion path.
+
+The full runtime gate passed rustfmt, the locked workspace test suite, repository validation, fake-provider stale-write and category-drift tests, and a real-repository plan smoke that required `discussions_bootstrap_required` while forbidding `create_discussion`. Live create/update/close/reopen dogfood remains blocked only by the provider feature being disabled.
 
 ## Non-goals for this slice
 
