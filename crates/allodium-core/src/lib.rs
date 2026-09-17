@@ -2,6 +2,7 @@ pub mod github;
 pub mod github_milestone;
 pub mod github_release;
 pub mod github_wiki;
+pub mod label;
 pub mod milestone;
 pub mod release;
 pub mod wiki;
@@ -165,6 +166,7 @@ pub fn validate(root: impl AsRef<Path>) -> ValidationReport {
         Err(error) => report.errors.push(error),
     }
 
+    label::validate_labels(root, &mut report);
     milestone::validate_milestones(root, &mut report);
     release::validate_releases(root, &mut report);
     wiki::validate_wiki(root, &mut report);
