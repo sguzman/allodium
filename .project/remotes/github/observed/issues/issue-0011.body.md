@@ -34,10 +34,10 @@ Canonical board membership should initially reference object families Allodium a
 - [x] Validate duplicate IDs, dangling item references, unknown field references, invalid option references, and incompatible field values.
 - [ ] Keep GitHub Project number/node ID, item IDs, field IDs, option/iteration IDs, view IDs, URLs, and owner identity under `.project/remotes/github/` only.
 - [ ] Require explicit provider configuration for the GitHub Project owner authority (`user` or `organization`) and projection target; do not infer cross-authority identity from matching names.
-- [ ] Establish a separate Projects credential/capability boundary. Repository `GITHUB_TOKEN` must not be treated as sufficient Projects authority.
-- [ ] When Projects credentials are absent, surface a non-mutating `projects_auth_required`/capability operation without blocking Issues, Reviews, Wiki, Releases, Milestones, Labels, or Discussions reconciliation.
-- [ ] Keep Projects credentials environment/secret-only; never serialize tokens or derived secrets into `.project/`.
-- [ ] Make GitHub Projects planning deterministic and network-free from canonical state plus persisted provider configuration/mappings/observations.
+- [x] Establish a separate Projects credential/capability boundary. Repository `GITHUB_TOKEN` must not be treated as sufficient Projects authority.
+- [x] When Projects credentials are absent, surface a non-mutating `projects_auth_required`/capability operation without blocking Issues, Reviews, Wiki, Releases, Milestones, Labels, or Discussions reconciliation.
+- [x] Keep Projects credentials environment/secret-only; never serialize tokens or derived secrets into `.project/`.
+- [x] Make GitHub Projects planning deterministic and network-free from canonical state plus persisted provider configuration/mappings/observations.
 - [ ] Initially project only canonical object families with a defined identity mapping; do not invent canonical state for provider DraftIssue items.
 - [ ] Preserve provider-created items, field edits, and other foreign Project activity as GitHub-scoped evidence before deciding whether any subset should be promoted.
 - [ ] Use stable provider identities for mappings and optimistic observation checks before mutable writes.
@@ -51,13 +51,21 @@ The canonical-only increment is now executable and dogfooded. `allodium.board/v0
 
 The validator now enforces board/directory identity, field and view filename identity, supported field/value types, stable single-select option IDs, canonical issue/review membership, no dangling or duplicate item membership, known field/value references, valid select options, strict calendar dates, and layout-specific view rules. Checked-in valid and invalid board fixtures and module-level tests passed the full locked workspace gate. `docs/boards-v0.md` documents the format and provider boundary.
 
-This increment deliberately contains no GitHub Projects mapping, observation, planner, or runtime. The next layer is provider configuration plus a deterministic offline planner that can represent the separate Projects authentication boundary without giving GitHub ProjectV2 authority over the canonical board.
+## Projects capability progress
+
+The first GitHub Projects adapter layer is now executable. `.project/remotes/github/projects.toml` explicitly configures the GitHub authority kind/name, the environment-variable name from which separate Projects credentials may be supplied, and which canonical boards are enabled for projection. The credential value itself is never serialized. The offline planner reads only canonical state plus persisted provider configuration/capability observations; it does not inspect the environment or make network calls.
+
+Projects authorization is intentionally independent from the repository adapter token. The runtime capability observer checks only the separately named Projects credential. If no credential is present it writes a non-secret capability snapshot with `credential_available = false` and `authenticated = false`. If a credential is present, it must successfully probe the explicitly configured GitHub user/organization authority through GraphQL before `authenticated = true` and the owner node ID may be persisted. Rejected credentials do not become authority, and tests prove successful observation never writes token contents.
+
+The live Allodium sync dogfooded the missing-credential path after the capability bridge landed. It observed 11 mapped issues, one review, Wiki, Release, milestone, label, Discussion capability state, and one Projects capability snapshot in the same run. The resulting plan contained only the already-known `wiki_bootstrap_required`, `discussions_bootstrap_required`, and `projects_auth_required` operations. Apply performed zero Projects mutations and did not block or mutate the other surfaces. Re-observation produced no new drift, validation passed, and `.project/remotes/github/observed/projects/capabilities.toml` was committed as provider state.
+
+The next Projects increment is provider identity/mapping plus deterministic ProjectV2 planning. It must establish project/item/field/option/view identities and content identity prerequisites under the GitHub remote namespace before any ProjectV2 mutation is allowed.
 
 ## Design constraints
 
 This slice should resist two opposite failures. It must not reduce Allodium to a lowest-common-denominator fake forge API, but it also must not make GitHub's flexible ProjectV2 schema the ontology of the project itself. Provider richness can live in the GitHub adapter and remote namespace while the canonical board remains directly understandable and editable with ordinary filesystem tools.
 
-The first implementation increment is therefore canonical-only: board/field/value/view records plus validation and fixtures. GitHub mapping and runtime follow only after that format is executable.
+The implementation sequence is canonical board core, then provider capability/configuration, then provider identity/mapping and observation, and only then ProjectV2 mutation. Each layer must remain useful and valid when the next provider capability is unavailable.
 
 This issue is canonical Allodium state. Any GitHub Issue projection of this work item is downstream.
 
