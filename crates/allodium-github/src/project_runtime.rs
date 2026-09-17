@@ -1,404 +1,4 @@
-from pathlib import Path
-
-
-def replace_between(text: str, start: str, end: str, replacement: str) -> str:
-    a = text.index(start)
-    b = text.index(end, a)
-    return text[:a] + replacement + text[b:]
-
-# --- deterministic planner -------------------------------------------------
-core = Path("crates/allodium-core/src/github_project.rs")
-text = core.read_text()
-if "use crate::github_project_observation::load_observed_project_provider_state;" not in text:
-    anchor = "use crate::load_remote;\n"
-    text = text.replace(
-        anchor,
-        "use crate::github_project_observation::load_observed_project_provider_state;\n" + anchor,
-        1,
-    )
-
-new_plan_board = r'''#[allow(clippy::too_many_arguments)]
-fn plan_board(
-    root: &Path,
-    remote_name: &str,
-    board: &CanonicalBoard,
-    binding: &ProjectBoardBinding,
-    owner_node_id: &str,
-    mappings: &ProjectMappings,
-    issue_mappings: &IssueMappings,
-    review_mappings: &ReviewMappings,
-    operations: &mut Vec<GitHubOperation>,
-) -> Result<(), String> {
-    let mapping = mappings.boards.get(&board.record.id);
-    let Some(mapping) = mapping else {
-        match binding.target.as_str() {
-            "managed" => operations.push(project_operation(
-                &board.record.id,
-                "create_project",
-                None,
-                vec!["project:create".into()],
-                "explicit managed target has no provider project mapping; create exactly one ProjectV2 before any dependent mutation",
-            )),
-            "existing" => operations.push(project_operation(
-                &board.record.id,
-                "bind_project",
-                binding.project_number,
-                vec!["project:bind-existing".into()],
-                "explicit existing ProjectV2 target must be bound by configured number and stable provider identity; title matching is forbidden",
-            )),
-            _ => unreachable!("projection config target was validated"),
-        }
-        return Ok(());
-    };
-
-    if binding.target == "existing" && binding.project_number != Some(mapping.number) {
-        operations.push(runtime_requirement(
-            &board.record.id,
-            Some(mapping.number),
-            vec!["project:identity-review".into()],
-            "mapped ProjectV2 number does not match the explicitly configured existing target; refusing implicit retargeting",
-        ));
-        return Ok(());
-    }
-    if mapping.owner_node_id != owner_node_id {
-        operations.push(runtime_requirement(
-            &board.record.id,
-            Some(mapping.number),
-            vec!["project:owner-identity-review".into()],
-            "mapped ProjectV2 owner identity does not match the authenticated configured owner",
-        ));
-        return Ok(());
-    }
-
-    let Some(observed) = load_observed_project(root, remote_name, &board.record.id)? else {
-        operations.push(project_operation(
-            &board.record.id,
-            "observe_project",
-            Some(mapping.number),
-            vec!["project:observe".into()],
-            "mapped ProjectV2 has no persisted observation; observation is required before any mutable work",
-        ));
-        return Ok(());
-    };
-    if observed.number != mapping.number
-        || observed.node_id != mapping.node_id
-        || observed.owner_node_id != mapping.owner_node_id
-    {
-        operations.push(runtime_requirement(
-            &board.record.id,
-            Some(mapping.number),
-            vec!["project:identity-review".into()],
-            "observed ProjectV2 identity disagrees with the stable mapping; refusing automatic repair",
-        ));
-        return Ok(());
-    }
-
-    let Some(provider_state) =
-        load_observed_project_provider_state(root, remote_name, &board.record.id)?
-    else {
-        operations.push(project_operation(
-            &board.record.id,
-            "observe_project",
-            Some(mapping.number),
-            vec!["project:provider-state".into()],
-            "full ProjectV2 provider-state observation is required before mutation",
-        ));
-        return Ok(());
-    };
-    if provider_state.node_id != mapping.node_id || provider_state.number != mapping.number {
-        operations.push(runtime_requirement(
-            &board.record.id,
-            Some(mapping.number),
-            vec!["project:provider-state-identity-review".into()],
-            "full ProjectV2 provider-state observation disagrees with the stable mapping",
-        ));
-        return Ok(());
-    }
-
-    let mut project_fields = Vec::new();
-    if observed.title != board.record.title {
-        project_fields.push("title".into());
-    }
-    if observed.short_description != board.record.description {
-        project_fields.push("short_description".into());
-    }
-    if observed.closed {
-        project_fields.push("closed".into());
-    }
-    if !project_fields.is_empty() {
-        operations.push(project_operation(
-            &board.record.id,
-            "update_project",
-            Some(mapping.number),
-            project_fields,
-            "canonical board metadata differs from the last observed ProjectV2 state; apply only after a fresh optimistic identity/state check",
-        ));
-        return Ok(());
-    }
-
-    // Establish provider field identity before item values. Managed targets may
-    // create namespaced provider fields; existing targets never guess by name.
-    for field in &board.fields {
-        let expected_type = canonical_provider_field_type(&field.record.kind)?;
-        let Some(field_mapping) = mapping.fields.get(&field.record.id) else {
-            if binding.target == "managed" {
-                operations.push(project_operation(
-                    &board.record.id,
-                    "create_project_field",
-                    Some(mapping.number),
-                    vec![format!("field:{}", field.record.id)],
-                    "managed ProjectV2 is missing a stable provider field mapping; create one provider field and observe before dependent values",
-                ));
-            } else {
-                operations.push(runtime_requirement(
-                    &board.record.id,
-                    Some(mapping.number),
-                    vec![format!("field-binding:{}", field.record.id)],
-                    "existing ProjectV2 has no explicit stable field mapping; refusing name-based field identity",
-                ));
-            }
-            return Ok(());
-        };
-        if field_mapping.node_id.trim().is_empty() || field_mapping.data_type != expected_type {
-            operations.push(runtime_requirement(
-                &board.record.id,
-                Some(mapping.number),
-                vec![format!("field-identity-review:{}", field.record.id)],
-                "persisted ProjectV2 field identity or provider data type disagrees with the canonical field contract",
-            ));
-            return Ok(());
-        }
-        if field.record.kind == "single_select" {
-            for option in &field.record.options {
-                if !field_mapping.options.contains_key(&option.id) {
-                    operations.push(runtime_requirement(
-                        &board.record.id,
-                        Some(mapping.number),
-                        vec![format!("field-option:{}:{}", field.record.id, option.id)],
-                        "canonical single-select option has no stable provider option identity; option-schema mutation is intentionally not guessed",
-                    ));
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    // Membership is a separate mutation from field values. A missing item map
-    // therefore produces exactly one add operation and returns immediately.
-    for item in &board.items {
-        let canonical_id = &item.record.object;
-        let Some((remote_type, number)) =
-            provider_object(canonical_id, issue_mappings, review_mappings)
-        else {
-            operations.push(runtime_requirement(
-                &board.record.id,
-                Some(mapping.number),
-                vec![format!("repository-identity:{canonical_id}")],
-                "canonical board item has no repository projection identity",
-            ));
-            return Ok(());
-        };
-        let Some(content) = load_observed_project_content(root, remote_name, canonical_id)? else {
-            operations.push(runtime_requirement(
-                &board.record.id,
-                Some(mapping.number),
-                vec![format!("content-identity:{canonical_id}")],
-                "canonical board item lacks the persisted GitHub GraphQL content node identity required by addProjectV2ItemById",
-            ));
-            return Ok(());
-        };
-        if content.remote_type != remote_type
-            || content.number != number
-            || content.node_id.trim().is_empty()
-        {
-            operations.push(runtime_requirement(
-                &board.record.id,
-                Some(mapping.number),
-                vec![format!("content-identity-review:{canonical_id}")],
-                "persisted board-item content identity disagrees with the repository mapping",
-            ));
-            return Ok(());
-        }
-        match mapping.items.get(canonical_id) {
-            Some(item_mapping) if item_mapping.content_node_id == content.node_id => {}
-            Some(_) => {
-                operations.push(runtime_requirement(
-                    &board.record.id,
-                    Some(mapping.number),
-                    vec![format!("item-identity-review:{canonical_id}")],
-                    "persisted ProjectV2 item identity points at a different content node",
-                ));
-                return Ok(());
-            }
-            None => {
-                operations.push(project_operation(
-                    &board.record.id,
-                    "add_project_item",
-                    Some(mapping.number),
-                    vec![format!("item:{canonical_id}")],
-                    "ProjectV2 membership is missing; add the existing Issue/PullRequest by stable content node ID and re-observe before field values",
-                ));
-                return Ok(());
-            }
-        }
-    }
-
-    // Explicit canonical values are managed. Canonical absence does not clear
-    // provider values in v0 because absence/delete semantics remain undeclared.
-    for item in &board.items {
-        let item_mapping = mapping
-            .items
-            .get(&item.record.object)
-            .expect("membership loop established item mapping");
-        let Some(provider_item) = provider_state
-            .items
-            .iter()
-            .find(|candidate| candidate.node_id == item_mapping.node_id)
-        else {
-            operations.push(project_operation(
-                &board.record.id,
-                "observe_project",
-                Some(mapping.number),
-                vec![format!("item-provider-state:{}", item.record.object)],
-                "mapped ProjectV2 item is absent from the persisted provider snapshot; refresh observation before mutation",
-            ));
-            return Ok(());
-        };
-        for (field_id, value) in &item.record.values {
-            let field = board
-                .fields
-                .iter()
-                .find(|field| field.record.id == *field_id)
-                .expect("validated canonical board value references known field");
-            let field_mapping = mapping
-                .fields
-                .get(field_id)
-                .expect("field loop established provider field mapping");
-            let expected = expected_provider_value(&field.record.kind, value, field_mapping)?;
-            let observed_value = provider_item
-                .values
-                .iter()
-                .find(|candidate| candidate.field_node_id == field_mapping.node_id)
-                .map(|candidate| candidate.value.as_str());
-            if observed_value != Some(expected.as_str()) {
-                operations.push(project_operation(
-                    &board.record.id,
-                    "update_project_field_value",
-                    Some(mapping.number),
-                    vec![
-                        format!("item:{}", item.record.object),
-                        format!("field:{field_id}"),
-                    ],
-                    "canonical board field value differs from the last observed ProjectV2 item value; update only after a fresh optimistic state check",
-                ));
-                return Ok(());
-            }
-        }
-    }
-
-    for view in &board.views {
-        if !mapping.views.contains_key(&view.record.id) {
-            operations.push(runtime_requirement(
-                &board.record.id,
-                Some(mapping.number),
-                vec![format!("view:{}", view.record.id)],
-                "ProjectV2 view creation/binding remains outside the first non-destructive mutation slice",
-            ));
-            return Ok(());
-        }
-    }
-
-    Ok(())
-}
-
-fn project_operation(
-    canonical_id: &str,
-    action: &str,
-    number: Option<u64>,
-    fields: Vec<String>,
-    reason: &str,
-) -> GitHubOperation {
-    GitHubOperation {
-        canonical_id: canonical_id.into(),
-        action: action.into(),
-        number,
-        fields,
-        reason: reason.into(),
-    }
-}
-
-fn canonical_provider_field_type(kind: &str) -> Result<&'static str, String> {
-    match kind {
-        "text" => Ok("TEXT"),
-        "number" => Ok("NUMBER"),
-        "date" => Ok("DATE"),
-        "single_select" => Ok("SINGLE_SELECT"),
-        other => Err(format!("unsupported canonical board field kind {other:?}")),
-    }
-}
-
-fn expected_provider_value(
-    kind: &str,
-    value: &toml::Value,
-    mapping: &ProjectFieldMapping,
-) -> Result<String, String> {
-    match kind {
-        "text" | "date" => value
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| format!("canonical {kind} field value is not a string")),
-        "number" => {
-            if let Some(integer) = value.as_integer() {
-                Ok(integer.to_string())
-            } else if let Some(number) = value.as_float() {
-                Ok(number.to_string())
-            } else {
-                Err("canonical number field value is not numeric".into())
-            }
-        }
-        "single_select" => {
-            let option = value
-                .as_str()
-                .ok_or_else(|| "canonical single-select value is not a string option id".to_string())?;
-            mapping
-                .options
-                .get(option)
-                .cloned()
-                .ok_or_else(|| format!("canonical option {option:?} has no provider option mapping"))
-        }
-        other => Err(format!("unsupported canonical board field kind {other:?}")),
-    }
-}
-
-'''
-text = replace_between(text, "#[allow(clippy::too_many_arguments)]\nfn plan_board(", "fn provider_object(", new_plan_board)
-text = text.replace(
-    'assert_eq!(plan.operations[0].action, "projects_runtime_required");\n        assert_eq!(plan.operations[0].fields, vec!["project:create"]);',
-    'assert_eq!(plan.operations[0].action, "create_project");\n        assert_eq!(plan.operations[0].fields, vec!["project:create"]);',
-    1,
-)
-core.write_text(text)
-
-# --- expose read-only Project helpers to sibling runtime -------------------
-project = Path("crates/allodium-github/src/project.rs")
-text = project.read_text()
-for old, new in [
-    ("fn probe_projects_owner(\n", "pub(super) fn probe_projects_owner(\n"),
-    ("fn fetch_project_by_number(\n", "pub(super) fn fetch_project_by_number(\n"),
-    ("fn fetch_project_by_node(\n", "pub(super) fn fetch_project_by_node(\n"),
-    ("fn graphql(\n", "pub(super) fn graphql(\n"),
-    ("fn graphql_errors(payload: &Value) -> Result<(), String> {", "pub(super) fn graphql_errors(payload: &Value) -> Result<(), String> {"),
-    ("struct ProviderProject {", "pub(super) struct ProviderProject {"),
-    ("    fn into_snapshot(\n", "    pub(super) fn into_snapshot(\n"),
-]:
-    if old not in text:
-        raise SystemExit(f"project.rs visibility anchor missing: {old!r}")
-    text = text.replace(old, new, 1)
-project.write_text(text)
-
-# --- ProjectV2 mutation runtime -------------------------------------------
-runtime = Path("crates/allodium-github/src/project_runtime.rs")
-runtime.write_text(r'''use super::{GitHubAdapter, project};
+use super::{GitHubAdapter, project};
 use allodium_core::board::{CanonicalBoard, CanonicalBoardField, CanonicalBoardItem, load_boards};
 use allodium_core::github::GitHubOperation;
 use allodium_core::github_project::{
@@ -406,9 +6,7 @@ use allodium_core::github_project::{
     load_observed_project_content, load_observed_projects_capabilities, load_project_mappings,
     load_projects_projection_config, save_project_mappings,
 };
-use allodium_core::github_project_observation::{
-    ObservedProjectProviderState, load_observed_project_provider_state,
-};
+use allodium_core::github_project_observation::load_observed_project_provider_state;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::env;
@@ -441,9 +39,7 @@ pub(super) fn apply_operation(
         "update_project" => update_project(adapter, root, remote_name, operation),
         "create_project_field" => create_field(adapter, root, remote_name, operation),
         "add_project_item" => add_item(adapter, root, remote_name, operation),
-        "update_project_field_value" => {
-            update_field_value(adapter, root, remote_name, operation)
-        }
+        "update_project_field_value" => update_field_value(adapter, root, remote_name, operation),
         other => Err(format!("unsupported ProjectV2 runtime operation {other:?}")),
     }
 }
@@ -462,7 +58,9 @@ fn create_project(
     }
     let mut mappings = load_project_mappings(root, remote_name)?;
     if mappings.boards.contains_key(&board.record.id) {
-        return Err("stale ProjectV2 create plan: board already has a stable provider mapping".into());
+        return Err(
+            "stale ProjectV2 create plan: board already has a stable provider mapping".into(),
+        );
     }
 
     let query = r#"
@@ -490,7 +88,9 @@ fn create_project(
         .and_then(Value::as_str)
         .ok_or_else(|| "GitHub createProjectV2 returned no owner identity".to_string())?;
     if returned_owner != owner_node_id {
-        return Err("created ProjectV2 owner identity disagrees with authenticated configured owner".into());
+        return Err(
+            "created ProjectV2 owner identity disagrees with authenticated configured owner".into(),
+        );
     }
     mappings.boards.insert(
         board.record.id.clone(),
@@ -524,17 +124,25 @@ fn bind_project(
         .project_number
         .ok_or_else(|| "existing ProjectV2 target has no configured number".to_string())?;
     if operation.number != Some(configured_number) {
-        return Err("stale ProjectV2 bind plan: operation number differs from configured target".into());
+        return Err(
+            "stale ProjectV2 bind plan: operation number differs from configured target".into(),
+        );
     }
     let mut mappings = load_project_mappings(root, remote_name)?;
     if mappings.boards.contains_key(&board.record.id) {
-        return Err("stale ProjectV2 bind plan: board already has a stable provider mapping".into());
+        return Err(
+            "stale ProjectV2 bind plan: board already has a stable provider mapping".into(),
+        );
     }
-    let provider = project::fetch_project_by_number(adapter, &config, &token, configured_number)?
-        .ok_or_else(|| "configured existing ProjectV2 target was not found".to_string())?;
+    let provider =
+        project::fetch_project_by_number(adapter, &config, &token, configured_number)?
+            .ok_or_else(|| "configured existing ProjectV2 target was not found".to_string())?;
     let snapshot = provider.into_snapshot(&board.record.id, "binding")?;
     if snapshot.owner_node_id != owner_node_id {
-        return Err("existing ProjectV2 owner identity disagrees with authenticated configured owner".into());
+        return Err(
+            "existing ProjectV2 owner identity disagrees with authenticated configured owner"
+                .into(),
+        );
     }
     mappings.boards.insert(
         board.record.id.clone(),
@@ -692,7 +300,9 @@ fn create_field(
         let returned = created
             .get("options")
             .and_then(Value::as_array)
-            .ok_or_else(|| "created single-select ProjectV2 field returned no options".to_string())?;
+            .ok_or_else(|| {
+                "created single-select ProjectV2 field returned no options".to_string()
+            })?;
         for canonical in &field.record.options {
             let marker = option_marker(&field.record.id, &canonical.id);
             let provider = returned
@@ -731,7 +341,8 @@ fn add_item(
     let board = board(root, &operation.canonical_id)?;
     let canonical_id = tagged(operation, "item:")?;
     board_item(&board, canonical_id)?;
-    let project_mapping = require_fresh_project(adapter, root, remote_name, &token, &board.record.id)?;
+    let project_mapping =
+        require_fresh_project(adapter, root, remote_name, &token, &board.record.id)?;
     let content = load_observed_project_content(root, remote_name, canonical_id)?
         .ok_or_else(|| format!("missing ProjectV2 content identity for {canonical_id:?}"))?;
     let mut mappings = load_project_mappings(root, remote_name)?;
@@ -784,20 +395,18 @@ fn update_field_value(
     let field_id = tagged(operation, "field:")?;
     let item = board_item(&board, canonical_item)?;
     let field = board_field(&board, field_id)?;
-    let project_mapping = require_fresh_project(adapter, root, remote_name, &token, &board.record.id)?;
+    let project_mapping =
+        require_fresh_project(adapter, root, remote_name, &token, &board.record.id)?;
     let item_mapping = project_mapping
         .items
         .get(canonical_item)
         .ok_or_else(|| "ProjectV2 item mapping is missing at field-value apply time".to_string())?;
-    let field_mapping = project_mapping
-        .fields
-        .get(field_id)
-        .ok_or_else(|| "ProjectV2 field mapping is missing at field-value apply time".to_string())?;
-    let canonical_value = item
-        .record
-        .values
-        .get(field_id)
-        .ok_or_else(|| "field-value plan points at a canonical value that no longer exists".to_string())?;
+    let field_mapping = project_mapping.fields.get(field_id).ok_or_else(|| {
+        "ProjectV2 field mapping is missing at field-value apply time".to_string()
+    })?;
+    let canonical_value = item.record.values.get(field_id).ok_or_else(|| {
+        "field-value plan points at a canonical value that no longer exists".to_string()
+    })?;
     let value = mutation_field_value(&field.record.kind, canonical_value, field_mapping)?;
     let query = r#"
         mutation($project: ID!, $item: ID!, $field: ID!, $value: ProjectV2FieldValue!) {
@@ -851,8 +460,9 @@ fn authorized_context(
                 config.credential_env
             )
         })?;
-    let live_owner = project::probe_projects_owner(adapter, &config, &token)?
-        .ok_or_else(|| "GitHub Projects credential failed live owner authorization probe".to_string())?;
+    let live_owner = project::probe_projects_owner(adapter, &config, &token)?.ok_or_else(|| {
+        "GitHub Projects credential failed live owner authorization probe".to_string()
+    })?;
     if observed.owner_node_id.as_deref() != Some(live_owner.as_str()) {
         return Err("GitHub Projects owner identity changed since capability observation".into());
     }
@@ -872,8 +482,10 @@ fn require_fresh_project(
         .get(board_id)
         .cloned()
         .ok_or_else(|| format!("ProjectV2 mapping for {board_id:?} is missing"))?;
-    let observed = load_observed_project_provider_state(root, remote_name, board_id)?
-        .ok_or_else(|| format!("ProjectV2 provider-state observation for {board_id:?} is missing"))?;
+    let observed =
+        load_observed_project_provider_state(root, remote_name, board_id)?.ok_or_else(|| {
+            format!("ProjectV2 provider-state observation for {board_id:?} is missing")
+        })?;
     if observed.node_id != mapping.node_id || observed.number != mapping.number {
         return Err("ProjectV2 observation identity disagrees with stable mapping".into());
     }
@@ -895,12 +507,19 @@ fn mutation_field_value(
     mapping: &ProjectFieldMapping,
 ) -> Result<Value, String> {
     match kind {
-        "text" => Ok(json!({"text": value.as_str().ok_or_else(|| "text board value is not a string".to_string())?})),
-        "date" => Ok(json!({"date": value.as_str().ok_or_else(|| "date board value is not a string".to_string())?})),
+        "text" => Ok(
+            json!({"text": value.as_str().ok_or_else(|| "text board value is not a string".to_string())?}),
+        ),
+        "date" => Ok(
+            json!({"date": value.as_str().ok_or_else(|| "date board value is not a string".to_string())?}),
+        ),
         "number" => {
             let number = if let Some(integer) = value.as_integer() {
                 if integer.unsigned_abs() > 9_007_199_254_740_991u64 {
-                    return Err("canonical integer board value exceeds exact GitHub GraphQL Float range".into());
+                    return Err(
+                        "canonical integer board value exceeds exact GitHub GraphQL Float range"
+                            .into(),
+                    );
                 }
                 integer as f64
             } else {
@@ -930,7 +549,10 @@ fn board(root: &Path, board_id: &str) -> Result<CanonicalBoard, String> {
         .ok_or_else(|| format!("canonical board {board_id:?} no longer exists"))
 }
 
-fn board_field<'a>(board: &'a CanonicalBoard, field_id: &str) -> Result<&'a CanonicalBoardField, String> {
+fn board_field<'a>(
+    board: &'a CanonicalBoard,
+    field_id: &str,
+) -> Result<&'a CanonicalBoardField, String> {
     board
         .fields
         .iter()
@@ -938,7 +560,10 @@ fn board_field<'a>(board: &'a CanonicalBoard, field_id: &str) -> Result<&'a Cano
         .ok_or_else(|| format!("canonical board field {field_id:?} no longer exists"))
 }
 
-fn board_item<'a>(board: &'a CanonicalBoard, canonical_id: &str) -> Result<&'a CanonicalBoardItem, String> {
+fn board_item<'a>(
+    board: &'a CanonicalBoard,
+    canonical_id: &str,
+) -> Result<&'a CanonicalBoardItem, String> {
     board
         .items
         .iter()
@@ -966,7 +591,9 @@ fn tagged<'a>(operation: &'a GitHubOperation, prefix: &str) -> Result<&'a str, S
         .next()
         .ok_or_else(|| format!("ProjectV2 operation is missing {prefix:?} identity tag"))?;
     if values.next().is_some() {
-        return Err(format!("ProjectV2 operation has multiple {prefix:?} identity tags"));
+        return Err(format!(
+            "ProjectV2 operation has multiple {prefix:?} identity tags"
+        ));
     }
     Ok(value)
 }
@@ -1035,8 +662,14 @@ mod tests {
         write_ready_root(&root, "ALLODIUM_RUNTIME_CREATE");
         unsafe { env::set_var("ALLODIUM_RUNTIME_CREATE", "projects-token") };
         let responses = vec![
-            json_response(200, r#"{"data":{"user":{"id":"U_owner","projectsV2":{"totalCount":0}}}}"#),
-            json_response(200, r#"{"data":{"createProjectV2":{"projectV2":{"id":"PVT_new","number":9,"url":"https://github.com/users/sguzman/projects/9","owner":{"id":"U_owner"}}}}}"#),
+            json_response(
+                200,
+                r#"{"data":{"user":{"id":"U_owner","projectsV2":{"totalCount":0}}}}"#,
+            ),
+            json_response(
+                200,
+                r#"{"data":{"createProjectV2":{"projectV2":{"id":"PVT_new","number":9,"url":"https://github.com/users/sguzman/projects/9","owner":{"id":"U_owner"}}}}}"#,
+            ),
         ];
         let (base, requests, handle) = response_server(responses);
         let adapter = test_adapter(base);
@@ -1057,8 +690,16 @@ mod tests {
         assert_eq!(mapping.node_id, "PVT_new");
         assert_eq!(mapping.number, 9);
         let requests = requests.lock().unwrap();
-        assert!(requests.iter().all(|request| request.contains("authorization: Bearer projects-token")));
-        assert!(!requests.iter().any(|request| request.contains("repo-token")));
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.contains("authorization: Bearer projects-token"))
+        );
+        assert!(
+            !requests
+                .iter()
+                .any(|request| request.contains("repo-token"))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1071,7 +712,10 @@ mod tests {
         unsafe { env::set_var("ALLODIUM_RUNTIME_STALE", "projects-token") };
         let live = project_response("Provider changed", "2026-09-17T20:01:00Z");
         let responses = vec![
-            json_response(200, r#"{"data":{"user":{"id":"U_owner","projectsV2":{"totalCount":1}}}}"#),
+            json_response(
+                200,
+                r#"{"data":{"user":{"id":"U_owner","projectsV2":{"totalCount":1}}}}"#,
+            ),
             json_response(200, &live),
         ];
         let (base, requests, handle) = response_server(responses);
@@ -1274,93 +918,3 @@ mod tests {
         root
     }
 }
-''')
-
-# --- wire adapter apply/report --------------------------------------------
-lib = Path("crates/allodium-github/src/lib.rs")
-text = lib.read_text()
-text = text.replace("mod project;\n", "mod project;\nmod project_runtime;\n", 1)
-old_fields = """    pub projects_capabilities_observed: usize,\n    pub projects_config_required: usize,\n    pub projects_auth_required: usize,\n    pub projects_owner_review_required: usize,\n    pub projects_runtime_required: usize,\n"""
-new_fields = """    pub projects_capabilities_observed: usize,\n    pub projects_created: usize,\n    pub projects_bound: usize,\n    pub projects_observed: usize,\n    pub projects_updated: usize,\n    pub project_fields_created: usize,\n    pub project_items_added: usize,\n    pub project_field_values_updated: usize,\n    pub projects_config_required: usize,\n    pub projects_auth_required: usize,\n    pub projects_owner_review_required: usize,\n    pub projects_runtime_required: usize,\n"""
-if old_fields not in text:
-    raise SystemExit("ApplyReport Projects field block missing")
-text = text.replace(old_fields, new_fields, 1)
-anchor = '''                "observe_projects_capabilities" => {
-                    let projects =
-                        project::observe_projects_capabilities(self, root, &plan.remote)?;
-                    report.projects_capabilities_observed += projects.capabilities_observed;
-                }
-'''
-insert = anchor + '''                "create_project"
-                | "bind_project"
-                | "observe_project"
-                | "update_project"
-                | "create_project_field"
-                | "add_project_item"
-                | "update_project_field_value" => {
-                    match project_runtime::apply_operation(self, root, &plan.remote, operation)? {
-                        project_runtime::ProjectsApplyOutcome::Created => report.projects_created += 1,
-                        project_runtime::ProjectsApplyOutcome::Bound => report.projects_bound += 1,
-                        project_runtime::ProjectsApplyOutcome::Observed(count) => report.projects_observed += count,
-                        project_runtime::ProjectsApplyOutcome::Updated => report.projects_updated += 1,
-                        project_runtime::ProjectsApplyOutcome::FieldCreated => report.project_fields_created += 1,
-                        project_runtime::ProjectsApplyOutcome::ItemAdded => report.project_items_added += 1,
-                        project_runtime::ProjectsApplyOutcome::FieldValueUpdated => report.project_field_values_updated += 1,
-                    }
-                }
-'''
-if anchor not in text:
-    raise SystemExit("Projects apply dispatch anchor missing")
-text = text.replace(anchor, insert, 1)
-lib.write_text(text)
-
-# --- CLI reporting ---------------------------------------------------------
-cli = Path("crates/allodium-cli/src/main.rs")
-text = cli.read_text()
-anchor = '''            println!(
-                "observed {} GitHub Projects capability snapshot(s)",
-                report.projects_capabilities_observed
-            );
-            println!(
-                "{} GitHub Projects projection(s) require configuration",
-                report.projects_config_required
-            );
-'''
-replacement = '''            println!(
-                "observed {} GitHub Projects capability snapshot(s)",
-                report.projects_capabilities_observed
-            );
-            println!("created {} GitHub ProjectV2 project(s)", report.projects_created);
-            println!("bound {} existing GitHub ProjectV2 project(s)", report.projects_bound);
-            println!("observed {} GitHub ProjectV2 project(s) during apply", report.projects_observed);
-            println!("updated {} GitHub ProjectV2 project(s)", report.projects_updated);
-            println!("created {} GitHub ProjectV2 field(s)", report.project_fields_created);
-            println!("added {} GitHub ProjectV2 item(s)", report.project_items_added);
-            println!(
-                "updated {} GitHub ProjectV2 field value(s)",
-                report.project_field_values_updated
-            );
-            println!(
-                "{} GitHub Projects projection(s) require configuration",
-                report.projects_config_required
-            );
-'''
-if anchor not in text:
-    raise SystemExit("CLI Projects report anchor missing")
-text = text.replace(anchor, replacement, 1)
-text = text.replace(
-    '"{} GitHub Projects projection(s) are waiting for ProjectV2 runtime",',
-    '"{} GitHub Projects projection(s) remain at a deferred/non-mutating provider boundary",',
-    1,
-)
-cli.write_text(text)
-
-# --- provider docs ---------------------------------------------------------
-docs = Path("docs/github-projects-provider-v0.md")
-text = docs.read_text()
-text = text.replace(
-    "## Current mutation boundary\n\nThis increment is identity/planning only. The planner can distinguish managed creation, binding an explicitly numbered existing Project, missing observation, content identity prerequisites, item/field/option/view mapping gaps, and identity disagreement. All such work still emits the non-mutating `projects_runtime_required` boundary. No ProjectV2 deletion is planned, and canonical absence has no provider deletion meaning yet.\n",
-    "## Non-destructive mutation boundary\n\nThe first ProjectV2 mutation runtime is deliberately staged. Planning emits at most one mutable ProjectV2 operation per canonical board, so every project creation, provider-field creation, item-membership addition, metadata update, or field-value update is separated by a fresh observation boundary. This matches GitHub's own API contract that adding an item and updating its field values are separate mutations.\n\nManaged targets may create ProjectV2 projects and provider fields. Allodium-created provider fields are namespaced as `Allodium: <canonical name>` and immediately receive stable field/option mappings; this avoids guessing identity from GitHub field names or accidentally adopting provider defaults. Existing targets bind only by the explicitly configured Project number plus stable node identity. Missing field identity on an existing target remains a review/configuration boundary rather than a name-match heuristic.\n\nBefore every mutable write to an already-mapped Project, the runtime re-fetches the full normalized ProjectV2 state by stable node ID and compares it to the persisted provider-state observation. Any intervening provider change causes a stale-state refusal before mutation. Explicit canonical item values are managed only after both Project item and field identities exist; canonical absence does not clear provider values in v0. Project/item deletion remains unsupported, and view creation/binding remains a later non-destructive slice.\n",
-    1,
-)
-docs.write_text(text)

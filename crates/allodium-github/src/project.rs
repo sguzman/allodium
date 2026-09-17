@@ -315,7 +315,7 @@ fn projected_object(root: &Path, remote_name: &str, canonical_id: &str) -> Resul
     Ok(false)
 }
 
-fn probe_projects_owner(
+pub(super) fn probe_projects_owner(
     adapter: &GitHubAdapter,
     config: &ProjectsProjectionConfig,
     token: &str,
@@ -347,7 +347,7 @@ fn probe_projects_owner(
         .map(str::to_owned))
 }
 
-fn fetch_project_by_number(
+pub(super) fn fetch_project_by_number(
     adapter: &GitHubAdapter,
     config: &ProjectsProjectionConfig,
     token: &str,
@@ -372,7 +372,7 @@ fn fetch_project_by_number(
     parse_optional_project(project)
 }
 
-fn fetch_project_by_node(
+pub(super) fn fetch_project_by_node(
     adapter: &GitHubAdapter,
     token: &str,
     node_id: &str,
@@ -449,7 +449,7 @@ fn project_selection() -> &'static str {
     "#
 }
 
-fn graphql(
+pub(super) fn graphql(
     adapter: &GitHubAdapter,
     token: &str,
     query: &str,
@@ -477,7 +477,7 @@ fn graphql(
         .map_err(|error| format!("invalid GitHub Projects GraphQL response: {error}"))
 }
 
-fn graphql_errors(payload: &Value) -> Result<(), String> {
+pub(super) fn graphql_errors(payload: &Value) -> Result<(), String> {
     if let Some(errors) = payload.get("errors").and_then(Value::as_array) {
         if !errors.is_empty() {
             return Err(format!(
@@ -489,7 +489,7 @@ fn graphql_errors(payload: &Value) -> Result<(), String> {
 }
 
 #[derive(Debug, Clone)]
-struct ProviderProject {
+pub(super) struct ProviderProject {
     number: u64,
     node_id: String,
     url: String,
@@ -504,7 +504,7 @@ struct ProviderProject {
 }
 
 impl ProviderProject {
-    fn into_snapshot(
+    pub(super) fn into_snapshot(
         self,
         canonical_id: &str,
         observed_at: &str,

@@ -3,6 +3,7 @@ mod discussion_ingress;
 mod label;
 mod milestone;
 mod project;
+mod project_runtime;
 mod release;
 mod review_ingress;
 mod wiki;
@@ -110,6 +111,13 @@ pub struct ApplyReport {
     pub discussion_category_review_required: usize,
     pub discussion_category_change_unsupported: usize,
     pub projects_capabilities_observed: usize,
+    pub projects_created: usize,
+    pub projects_bound: usize,
+    pub projects_observed: usize,
+    pub projects_updated: usize,
+    pub project_fields_created: usize,
+    pub project_items_added: usize,
+    pub project_field_values_updated: usize,
     pub projects_config_required: usize,
     pub projects_auth_required: usize,
     pub projects_owner_review_required: usize,
@@ -784,6 +792,35 @@ impl GitHubAdapter {
                     let projects =
                         project::observe_projects_capabilities(self, root, &plan.remote)?;
                     report.projects_capabilities_observed += projects.capabilities_observed;
+                }
+                "create_project"
+                | "bind_project"
+                | "observe_project"
+                | "update_project"
+                | "create_project_field"
+                | "add_project_item"
+                | "update_project_field_value" => {
+                    match project_runtime::apply_operation(self, root, &plan.remote, operation)? {
+                        project_runtime::ProjectsApplyOutcome::Created => {
+                            report.projects_created += 1
+                        }
+                        project_runtime::ProjectsApplyOutcome::Bound => report.projects_bound += 1,
+                        project_runtime::ProjectsApplyOutcome::Observed(count) => {
+                            report.projects_observed += count
+                        }
+                        project_runtime::ProjectsApplyOutcome::Updated => {
+                            report.projects_updated += 1
+                        }
+                        project_runtime::ProjectsApplyOutcome::FieldCreated => {
+                            report.project_fields_created += 1
+                        }
+                        project_runtime::ProjectsApplyOutcome::ItemAdded => {
+                            report.project_items_added += 1
+                        }
+                        project_runtime::ProjectsApplyOutcome::FieldValueUpdated => {
+                            report.project_field_values_updated += 1
+                        }
+                    }
                 }
                 "projects_config_required" => {
                     report.projects_config_required += 1;

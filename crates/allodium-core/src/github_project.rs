@@ -3,6 +3,7 @@ use crate::github::{
     GitHubOperation, GitHubPlan, ISSUE_MAPPINGS_SCHEMA_V0, IssueMappings, PLAN_SCHEMA_V0,
     REVIEW_MAPPINGS_SCHEMA_V0, ReviewMappings,
 };
+use crate::github_project_observation::load_observed_project_provider_state;
 use crate::load_remote;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -261,25 +262,23 @@ fn plan_board(
 ) -> Result<(), String> {
     let mapping = mappings.boards.get(&board.record.id);
     let Some(mapping) = mapping else {
-        let (number, field, reason) = match binding.target.as_str() {
-            "managed" => (
+        match binding.target.as_str() {
+            "managed" => operations.push(project_operation(
+                &board.record.id,
+                "create_project",
                 None,
-                "project:create",
-                "explicit managed target has no provider project mapping; ProjectV2 creation runtime is the next boundary",
-            ),
-            "existing" => (
+                vec!["project:create".into()],
+                "explicit managed target has no provider project mapping; create exactly one ProjectV2 before any dependent mutation",
+            )),
+            "existing" => operations.push(project_operation(
+                &board.record.id,
+                "bind_project",
                 binding.project_number,
-                "project:bind-existing",
-                "explicit existing ProjectV2 target must be observed and bound by stable provider identity before use",
-            ),
+                vec!["project:bind-existing".into()],
+                "explicit existing ProjectV2 target must be bound by configured number and stable provider identity; title matching is forbidden",
+            )),
             _ => unreachable!("projection config target was validated"),
-        };
-        operations.push(runtime_requirement(
-            &board.record.id,
-            number,
-            vec![field.into()],
-            reason,
-        ));
+        }
         return Ok(());
     };
 
@@ -288,7 +287,7 @@ fn plan_board(
             &board.record.id,
             Some(mapping.number),
             vec!["project:identity-review".into()],
-            "mapped ProjectV2 number does not match the explicitly configured existing target; refusing name-based or implicit retargeting",
+            "mapped ProjectV2 number does not match the explicitly configured existing target; refusing implicit retargeting",
         ));
         return Ok(());
     }
@@ -303,11 +302,12 @@ fn plan_board(
     }
 
     let Some(observed) = load_observed_project(root, remote_name, &board.record.id)? else {
-        operations.push(runtime_requirement(
+        operations.push(project_operation(
             &board.record.id,
+            "observe_project",
             Some(mapping.number),
             vec!["project:observe".into()],
-            "mapped ProjectV2 has no persisted observation; read-only observation is required before mutable planning",
+            "mapped ProjectV2 has no persisted observation; observation is required before any mutable work",
         ));
         return Ok(());
     };
@@ -324,82 +324,318 @@ fn plan_board(
         return Ok(());
     }
 
-    let mut pending = Vec::new();
-    if observed.title != board.record.title {
-        pending.push("project:title".into());
-    }
-    if observed.short_description != board.record.description {
-        pending.push("project:short-description".into());
-    }
-    if observed.closed {
-        pending.push("project:reopen-review".into());
+    let Some(provider_state) =
+        load_observed_project_provider_state(root, remote_name, &board.record.id)?
+    else {
+        operations.push(project_operation(
+            &board.record.id,
+            "observe_project",
+            Some(mapping.number),
+            vec!["project:provider-state".into()],
+            "full ProjectV2 provider-state observation is required before mutation",
+        ));
+        return Ok(());
+    };
+    if provider_state.node_id != mapping.node_id || provider_state.number != mapping.number {
+        operations.push(runtime_requirement(
+            &board.record.id,
+            Some(mapping.number),
+            vec!["project:provider-state-identity-review".into()],
+            "full ProjectV2 provider-state observation disagrees with the stable mapping",
+        ));
+        return Ok(());
     }
 
+    let mut project_fields = Vec::new();
+    if observed.title != board.record.title {
+        project_fields.push("title".into());
+    }
+    if observed.short_description != board.record.description {
+        project_fields.push("short_description".into());
+    }
+    if observed.closed {
+        project_fields.push("closed".into());
+    }
+    if !project_fields.is_empty() {
+        operations.push(project_operation(
+            &board.record.id,
+            "update_project",
+            Some(mapping.number),
+            project_fields,
+            "canonical board metadata differs from the last observed ProjectV2 state; apply only after a fresh optimistic identity/state check",
+        ));
+        return Ok(());
+    }
+
+    // Content node identity can be established independently of Project field
+    // schema. Diagnose missing/review-required repository identity first, but
+    // do not add membership until provider field identity is settled below.
     for item in &board.items {
         let canonical_id = &item.record.object;
-        let provider = provider_object(canonical_id, issue_mappings, review_mappings);
-        let Some((remote_type, number)) = provider else {
-            pending.push(format!("repository-identity:{canonical_id}"));
-            continue;
+        let Some((remote_type, number)) =
+            provider_object(canonical_id, issue_mappings, review_mappings)
+        else {
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("repository-identity:{canonical_id}")],
+                "canonical board item has no repository projection identity",
+            ));
+            return Ok(());
         };
         let Some(content) = load_observed_project_content(root, remote_name, canonical_id)? else {
-            pending.push(format!("content-identity:{canonical_id}"));
-            continue;
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("content-identity:{canonical_id}")],
+                "canonical board item lacks the persisted GitHub GraphQL content node identity required by addProjectV2ItemById",
+            ));
+            return Ok(());
         };
         if content.remote_type != remote_type
             || content.number != number
-            || content.node_id.is_empty()
+            || content.node_id.trim().is_empty()
         {
-            pending.push(format!("content-identity-review:{canonical_id}"));
-            continue;
-        }
-        match mapping.items.get(canonical_id) {
-            Some(item_mapping) if item_mapping.content_node_id == content.node_id => {}
-            Some(_) => pending.push(format!("item-identity-review:{canonical_id}")),
-            None => pending.push(format!("item-membership:{canonical_id}")),
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("content-identity-review:{canonical_id}")],
+                "persisted board-item content identity disagrees with the repository mapping",
+            ));
+            return Ok(());
         }
     }
 
+    // Establish provider field identity before item values. Managed targets may
+    // create namespaced provider fields; existing targets never guess by name.
     for field in &board.fields {
+        let expected_type = canonical_provider_field_type(&field.record.kind)?;
         let Some(field_mapping) = mapping.fields.get(&field.record.id) else {
-            pending.push(format!("field-identity:{}", field.record.id));
-            continue;
+            if binding.target == "managed" {
+                operations.push(project_operation(
+                    &board.record.id,
+                    "create_project_field",
+                    Some(mapping.number),
+                    vec![format!("field:{}", field.record.id)],
+                    "managed ProjectV2 is missing a stable provider field mapping; create one provider field and observe before dependent values",
+                ));
+            } else {
+                operations.push(runtime_requirement(
+                    &board.record.id,
+                    Some(mapping.number),
+                    vec![format!("field-binding:{}", field.record.id)],
+                    "existing ProjectV2 has no explicit stable field mapping; refusing name-based field identity",
+                ));
+            }
+            return Ok(());
         };
-        if field_mapping.node_id.is_empty() {
-            pending.push(format!("field-identity-review:{}", field.record.id));
-            continue;
+        if field_mapping.node_id.trim().is_empty() || field_mapping.data_type != expected_type {
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("field-identity-review:{}", field.record.id)],
+                "persisted ProjectV2 field identity or provider data type disagrees with the canonical field contract",
+            ));
+            return Ok(());
         }
         if field.record.kind == "single_select" {
             for option in &field.record.options {
                 if !field_mapping.options.contains_key(&option.id) {
-                    pending.push(format!("field-option:{}:{}", field.record.id, option.id));
+                    operations.push(runtime_requirement(
+                        &board.record.id,
+                        Some(mapping.number),
+                        vec![format!("field-option:{}:{}", field.record.id, option.id)],
+                        "canonical single-select option has no stable provider option identity; option-schema mutation is intentionally not guessed",
+                    ));
+                    return Ok(());
                 }
+            }
+        }
+    }
+
+    // Membership is a separate mutation from field values. A missing item map
+    // therefore produces exactly one add operation and returns immediately.
+    for item in &board.items {
+        let canonical_id = &item.record.object;
+        let Some((remote_type, number)) =
+            provider_object(canonical_id, issue_mappings, review_mappings)
+        else {
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("repository-identity:{canonical_id}")],
+                "canonical board item has no repository projection identity",
+            ));
+            return Ok(());
+        };
+        let Some(content) = load_observed_project_content(root, remote_name, canonical_id)? else {
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("content-identity:{canonical_id}")],
+                "canonical board item lacks the persisted GitHub GraphQL content node identity required by addProjectV2ItemById",
+            ));
+            return Ok(());
+        };
+        if content.remote_type != remote_type
+            || content.number != number
+            || content.node_id.trim().is_empty()
+        {
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("content-identity-review:{canonical_id}")],
+                "persisted board-item content identity disagrees with the repository mapping",
+            ));
+            return Ok(());
+        }
+        match mapping.items.get(canonical_id) {
+            Some(item_mapping) if item_mapping.content_node_id == content.node_id => {}
+            Some(_) => {
+                operations.push(runtime_requirement(
+                    &board.record.id,
+                    Some(mapping.number),
+                    vec![format!("item-identity-review:{canonical_id}")],
+                    "persisted ProjectV2 item identity points at a different content node",
+                ));
+                return Ok(());
+            }
+            None => {
+                operations.push(project_operation(
+                    &board.record.id,
+                    "add_project_item",
+                    Some(mapping.number),
+                    vec![format!("item:{canonical_id}")],
+                    "ProjectV2 membership is missing; add the existing Issue/PullRequest by stable content node ID and re-observe before field values",
+                ));
+                return Ok(());
+            }
+        }
+    }
+
+    // Explicit canonical values are managed. Canonical absence does not clear
+    // provider values in v0 because absence/delete semantics remain undeclared.
+    for item in &board.items {
+        let item_mapping = mapping
+            .items
+            .get(&item.record.object)
+            .expect("membership loop established item mapping");
+        let Some(provider_item) = provider_state
+            .items
+            .iter()
+            .find(|candidate| candidate.node_id == item_mapping.node_id)
+        else {
+            operations.push(project_operation(
+                &board.record.id,
+                "observe_project",
+                Some(mapping.number),
+                vec![format!("item-provider-state:{}", item.record.object)],
+                "mapped ProjectV2 item is absent from the persisted provider snapshot; refresh observation before mutation",
+            ));
+            return Ok(());
+        };
+        for (field_id, value) in &item.record.values {
+            let field = board
+                .fields
+                .iter()
+                .find(|field| field.record.id == *field_id)
+                .expect("validated canonical board value references known field");
+            let field_mapping = mapping
+                .fields
+                .get(field_id)
+                .expect("field loop established provider field mapping");
+            let expected = expected_provider_value(&field.record.kind, value, field_mapping)?;
+            let observed_value = provider_item
+                .values
+                .iter()
+                .find(|candidate| candidate.field_node_id == field_mapping.node_id)
+                .map(|candidate| candidate.value.as_str());
+            if observed_value != Some(expected.as_str()) {
+                operations.push(project_operation(
+                    &board.record.id,
+                    "update_project_field_value",
+                    Some(mapping.number),
+                    vec![
+                        format!("item:{}", item.record.object),
+                        format!("field:{field_id}"),
+                    ],
+                    "canonical board field value differs from the last observed ProjectV2 item value; update only after a fresh optimistic state check",
+                ));
+                return Ok(());
             }
         }
     }
 
     for view in &board.views {
         if !mapping.views.contains_key(&view.record.id) {
-            pending.push(format!("view-identity:{}", view.record.id));
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("view:{}", view.record.id)],
+                "ProjectV2 view creation/binding remains outside the first non-destructive mutation slice",
+            ));
+            return Ok(());
         }
     }
 
-    pending.sort();
-    pending.dedup();
-    if pending.is_empty() {
-        pending.extend([
-            "item-membership".into(),
-            "field-values".into(),
-            "views".into(),
-        ]);
-    }
-    operations.push(runtime_requirement(
-        &board.record.id,
-        Some(mapping.number),
-        pending,
-        "stable ProjectV2 identities are separated from canonical board state; remaining provider work is intentionally behind the mutation/runtime boundary",
-    ));
     Ok(())
+}
+
+fn project_operation(
+    canonical_id: &str,
+    action: &str,
+    number: Option<u64>,
+    fields: Vec<String>,
+    reason: &str,
+) -> GitHubOperation {
+    GitHubOperation {
+        canonical_id: canonical_id.into(),
+        action: action.into(),
+        number,
+        fields,
+        reason: reason.into(),
+    }
+}
+
+fn canonical_provider_field_type(kind: &str) -> Result<&'static str, String> {
+    match kind {
+        "text" => Ok("TEXT"),
+        "number" => Ok("NUMBER"),
+        "date" => Ok("DATE"),
+        "single_select" => Ok("SINGLE_SELECT"),
+        other => Err(format!("unsupported canonical board field kind {other:?}")),
+    }
+}
+
+fn expected_provider_value(
+    kind: &str,
+    value: &toml::Value,
+    mapping: &ProjectFieldMapping,
+) -> Result<String, String> {
+    match kind {
+        "text" | "date" => value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("canonical {kind} field value is not a string")),
+        "number" => {
+            if let Some(integer) = value.as_integer() {
+                Ok(integer.to_string())
+            } else if let Some(number) = value.as_float() {
+                Ok(number.to_string())
+            } else {
+                Err("canonical number field value is not numeric".into())
+            }
+        }
+        "single_select" => {
+            let option = value.as_str().ok_or_else(|| {
+                "canonical single-select value is not a string option id".to_string()
+            })?;
+            mapping.options.get(option).cloned().ok_or_else(|| {
+                format!("canonical option {option:?} has no provider option mapping")
+            })
+        }
+        other => Err(format!("unsupported canonical board field kind {other:?}")),
+    }
 }
 
 fn provider_object(
@@ -838,7 +1074,7 @@ mod tests {
         let root = ready_root("managed-create", "managed", None);
         let plan = plan_boards(&root, "github").unwrap();
         assert_eq!(plan.operations.len(), 1);
-        assert_eq!(plan.operations[0].action, "projects_runtime_required");
+        assert_eq!(plan.operations[0].action, "create_project");
         assert_eq!(plan.operations[0].fields, vec!["project:create"]);
         assert_eq!(plan.operations[0].number, None);
         fs::remove_dir_all(root).unwrap();
@@ -869,6 +1105,7 @@ mod tests {
         let root = ready_root("content", "managed", None);
         write_project_mapping(&root, false);
         write_observed_project_fixture(&root);
+        write_provider_state_fixture(&root, false);
         write_issue_mapping(&root);
         let plan = plan_boards(&root, "github").unwrap();
         assert!(
@@ -898,17 +1135,15 @@ mod tests {
     }
 
     #[test]
-    fn fully_known_identity_still_stops_before_project_mutation() {
+    fn fully_known_and_matching_project_state_is_idempotent() {
         let root = ready_root("known", "managed", None);
         write_project_mapping(&root, true);
         write_observed_project_fixture(&root);
+        write_provider_state_fixture(&root, true);
         write_issue_mapping(&root);
         write_content_identity(&root);
         let plan = plan_boards(&root, "github").unwrap();
-        assert_eq!(plan.operations.len(), 1);
-        assert_eq!(plan.operations[0].action, "projects_runtime_required");
-        assert!(plan.operations[0].fields.contains(&"field-values".into()));
-        assert!(!plan.operations[0].action.contains("delete"));
+        assert!(plan.operations.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1056,6 +1291,89 @@ mod tests {
                 closed: false,
                 remote_updated_at: "2026-09-17T00:00:00Z".into(),
                 observed_at: "2026-09-17T00:00:00Z".into(),
+            },
+        )
+        .unwrap();
+    }
+
+    fn write_provider_state_fixture(root: &Path, complete: bool) {
+        use crate::github_project_observation::{
+            OBSERVED_PROJECT_PROVIDER_STATE_SCHEMA_V0, ObservedProjectProviderState,
+            ObservedProviderContent, ObservedProviderField, ObservedProviderFieldValue,
+            ObservedProviderItem, ObservedProviderOption, ObservedProviderView,
+            write_observed_project_provider_state,
+        };
+
+        let fields = if complete {
+            vec![ObservedProviderField {
+                node_id: "PVTF_field".into(),
+                provider_type: "ProjectV2SingleSelectField".into(),
+                name: "Status".into(),
+                data_type: "SINGLE_SELECT".into(),
+                remote_updated_at: "2026-09-17T00:00:00Z".into(),
+                options: vec![ObservedProviderOption {
+                    id: "provider-option".into(),
+                    name: "Todo".into(),
+                }],
+                iterations: Vec::new(),
+            }]
+        } else {
+            Vec::new()
+        };
+        let items = if complete {
+            vec![ObservedProviderItem {
+                node_id: "PVTI_item".into(),
+                item_type: "ISSUE".into(),
+                remote_updated_at: "2026-09-17T00:00:00Z".into(),
+                content: Some(ObservedProviderContent {
+                    provider_type: "Issue".into(),
+                    node_id: "I_issue".into(),
+                    number: Some(1),
+                    repository: Some("sguzman/allodium".into()),
+                    title: "Test".into(),
+                    url: Some("https://github.com/sguzman/allodium/issues/1".into()),
+                    body: None,
+                }),
+                values: vec![ObservedProviderFieldValue {
+                    provider_type: "ProjectV2ItemFieldSingleSelectValue".into(),
+                    field_node_id: "PVTF_field".into(),
+                    field_name: "Status".into(),
+                    value: "provider-option".into(),
+                    remote_updated_at: "2026-09-17T00:00:00Z".into(),
+                }],
+            }]
+        } else {
+            Vec::new()
+        };
+        let views = if complete {
+            vec![ObservedProviderView {
+                node_id: "PVTV_view".into(),
+                number: 1,
+                name: "Development".into(),
+                layout: "BOARD_LAYOUT".into(),
+                filter: None,
+            }]
+        } else {
+            Vec::new()
+        };
+        write_observed_project_provider_state(
+            root,
+            "github",
+            &ObservedProjectProviderState {
+                schema: OBSERVED_PROJECT_PROVIDER_STATE_SCHEMA_V0.into(),
+                canonical_id: "board-0001".into(),
+                number: 7,
+                node_id: "PVT_project".into(),
+                url: "https://github.com/users/sguzman/projects/7".into(),
+                owner_node_id: "U_owner".into(),
+                title: "Board".into(),
+                short_description: "Test board".into(),
+                closed: false,
+                remote_updated_at: "2026-09-17T00:00:00Z".into(),
+                observed_at: "2026-09-17T00:00:00Z".into(),
+                fields,
+                items,
+                views,
             },
         )
         .unwrap();

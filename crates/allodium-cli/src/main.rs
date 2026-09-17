@@ -341,6 +341,34 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
                 report.projects_capabilities_observed
             );
             println!(
+                "created {} GitHub ProjectV2 project(s)",
+                report.projects_created
+            );
+            println!(
+                "bound {} existing GitHub ProjectV2 project(s)",
+                report.projects_bound
+            );
+            println!(
+                "observed {} GitHub ProjectV2 project(s) during apply",
+                report.projects_observed
+            );
+            println!(
+                "updated {} GitHub ProjectV2 project(s)",
+                report.projects_updated
+            );
+            println!(
+                "created {} GitHub ProjectV2 field(s)",
+                report.project_fields_created
+            );
+            println!(
+                "added {} GitHub ProjectV2 item(s)",
+                report.project_items_added
+            );
+            println!(
+                "updated {} GitHub ProjectV2 field value(s)",
+                report.project_field_values_updated
+            );
+            println!(
                 "{} GitHub Projects projection(s) require configuration",
                 report.projects_config_required
             );
@@ -353,7 +381,7 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
                 report.projects_owner_review_required
             );
             println!(
-                "{} GitHub Projects projection(s) are waiting for ProjectV2 runtime",
+                "{} GitHub Projects projection(s) remain at a deferred/non-mutating provider boundary",
                 report.projects_runtime_required
             );
             ExitCode::SUCCESS
