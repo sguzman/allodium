@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/m4-projects-observation.yml'
       - '.github/m4-projects-observation.py'
+      - '.github/m4-projects-observation-fix.py'
 
 permissions:
   contents: write
@@ -25,6 +26,7 @@ jobs:
       - name: Materialize ProjectV2 observation runtime
         run: |
           python .github/m4-projects-observation.py
+          python .github/m4-projects-observation-fix.py
           cargo fmt --all
           cargo fmt --all -- --check
           cargo test --workspace --locked
@@ -43,6 +45,7 @@ jobs:
           git config user.email 'actions@users.noreply.github.com'
           git rm .github/workflows/m4-projects-observation.yml
           git rm .github/m4-projects-observation.py
+          git rm .github/m4-projects-observation-fix.py
           git add crates/allodium-core/src/github_project_observation.rs
           git add crates/allodium-core/src/lib.rs
           git add crates/allodium-github/src/project.rs
