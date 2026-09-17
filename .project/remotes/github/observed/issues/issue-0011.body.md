@@ -33,15 +33,15 @@ Canonical board membership should initially reference object families Allodium a
 - [x] Model board grouping as a view operation over a field; do not introduce canonical column objects merely because one provider renders columns.
 - [x] Validate duplicate IDs, dangling item references, unknown field references, invalid option references, and incompatible field values.
 - [ ] Keep GitHub Project number/node ID, item IDs, field IDs, option/iteration IDs, view IDs, URLs, and owner identity under `.project/remotes/github/` only.
-- [ ] Require explicit provider configuration for the GitHub Project owner authority (`user` or `organization`) and projection target; do not infer cross-authority identity from matching names.
+- [x] Require explicit provider configuration for the GitHub Project owner authority (`user` or `organization`) and projection target; do not infer cross-authority identity from matching names.
 - [x] Establish a separate Projects credential/capability boundary. Repository `GITHUB_TOKEN` must not be treated as sufficient Projects authority.
 - [x] When Projects credentials are absent, surface a non-mutating `projects_auth_required`/capability operation without blocking Issues, Reviews, Wiki, Releases, Milestones, Labels, or Discussions reconciliation.
 - [x] Keep Projects credentials environment/secret-only; never serialize tokens or derived secrets into `.project/`.
 - [x] Make GitHub Projects planning deterministic and network-free from canonical state plus persisted provider configuration/mappings/observations.
-- [ ] Initially project only canonical object families with a defined identity mapping; do not invent canonical state for provider DraftIssue items.
+- [x] Initially project only canonical object families with a defined identity mapping; do not invent canonical state for provider DraftIssue items.
 - [ ] Preserve provider-created items, field edits, and other foreign Project activity as GitHub-scoped evidence before deciding whether any subset should be promoted.
 - [ ] Use stable provider identities for mappings and optimistic observation checks before mutable writes.
-- [ ] Do not implement destructive Project/item deletion until the canonical absence semantics are explicit.
+- [x] Do not implement destructive Project/item deletion until the canonical absence semantics are explicit.
 - [x] Add fixtures/tests that prove the canonical board model is independent of GitHub ProjectV2 IDs and provider view vocabulary.
 - [ ] If a separately authorized Projects credential is available, dogfood one Allodium board through provider creation/mapping, item projection, field/value reconciliation, provider drift archival, and idempotent re-observation.
 
@@ -57,9 +57,19 @@ The first GitHub Projects adapter layer is now executable. `.project/remotes/git
 
 Projects authorization is intentionally independent from the repository adapter token. The runtime capability observer checks only the separately named Projects credential. If no credential is present it writes a non-secret capability snapshot with `credential_available = false` and `authenticated = false`. If a credential is present, it must successfully probe the explicitly configured GitHub user/organization authority through GraphQL before `authenticated = true` and the owner node ID may be persisted. Rejected credentials do not become authority, and tests prove successful observation never writes token contents.
 
-The live Allodium sync dogfooded the missing-credential path after the capability bridge landed. It observed 11 mapped issues, one review, Wiki, Release, milestone, label, Discussion capability state, and one Projects capability snapshot in the same run. The resulting plan contained only the already-known `wiki_bootstrap_required`, `discussions_bootstrap_required`, and `projects_auth_required` operations. Apply performed zero Projects mutations and did not block or mutate the other surfaces. Re-observation produced no new drift, validation passed, and `.project/remotes/github/observed/projects/capabilities.toml` was committed as provider state.
+The live Allodium sync dogfooded the missing-credential path after the capability bridge landed. It observed 11 mapped issues, one review, Wiki, Release, milestone, label, Discussion capability state, and one Projects capability snapshot in the same run. The resulting plan contained only the already-known `wiki_bootstrap_required`, `discussions_bootstrap_required`, and `projects_auth_required` operations. Apply performed zero Projects mutations and did not block or mutate the other surfaces. Re-observation produced no new drift and validation passed.
 
-The next Projects increment is provider identity/mapping plus deterministic ProjectV2 planning. It must establish project/item/field/option/view identities and content identity prerequisites under the GitHub remote namespace before any ProjectV2 mutation is allowed.
+## Projects identity substrate progress
+
+The provider identity substrate landed as `74d8e44f251977585ceccbd87ef1393384d7ae6a`. Board bindings now require an explicit target policy: `managed` means Allodium may eventually create its own ProjectV2; `existing` requires a positive explicit Project number. A matching title is never an identity rule. The provider namespace now has typed stable mappings for Project number/node ID/URL/owner identity, Project item node IDs plus content node IDs, field node IDs and data types, single-select option IDs, and view node IDs. Observed Project identity and issue/pull-request GraphQL content identity also have explicit provider-scoped record types.
+
+The deterministic planner now distinguishes managed creation, binding an explicitly numbered existing Project, missing Project observation, Project/owner identity disagreement, missing repository mapping, missing GraphQL content identity, missing item membership identity, missing field/option/view identity, and canonical Project metadata drift. Even with every known identity satisfied it still emits only `projects_runtime_required`; ProjectV2 mutation remains behind a later runtime gate. The planner never emits Project or item deletion.
+
+The first identity gate intentionally failed before publication because two pre-existing capability-runtime test fixtures still generated the older `projects.toml` shape without the newly mandatory target. All 79 core tests had already passed, which isolated the defect to fixture/schema skew. The fix kept `target` mandatory rather than introducing an implicit compatibility default, updated those fixtures to opt into `target = "managed"`, and reran the self-cleaning gate. The successful run passed 79 core tests, 8 checked-in fixture tests, the ingress idempotence test, 39 GitHub adapter tests, formatting, and repository validation, then repeated the complete suite after rebase before publishing the clean product commit.
+
+Permanent sync run 188 subsequently checked out exactly `74d8e44f251977585ceccbd87ef1393384d7ae6a`, observed and re-observed every existing GitHub surface, retained the expected `wiki_bootstrap_required`, `discussions_bootstrap_required`, and `projects_auth_required` plan, performed zero Projects mutations, validated the repository, and ended with `No durable GitHub state change.` This proves the richer identity substrate composes cleanly with the no-Projects-credential degraded mode.
+
+The next Projects increment is read-only ProjectV2 observation and provider-state archival. It must populate and verify stable Project/item/field/option/view/content identities when separately authorized, preserve foreign Project and DraftIssue activity as provider evidence, and establish the observation basis for later optimistic mutation guards without promoting provider state into canonical state.
 
 ## Design constraints
 
