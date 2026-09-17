@@ -26,6 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           python .github/m4-projects-view-runtime.py
+          python .github/m4-projects-view-runtime-fix.py
           cargo fmt --all
           cargo fmt --all -- --check
           cargo test --workspace --locked
@@ -46,6 +47,7 @@ jobs:
           git config user.email 'actions@users.noreply.github.com'
           git rm .github/workflows/m4-projects-view-runtime.yml
           git rm .github/m4-projects-view-runtime.py
+          git rm .github/m4-projects-view-runtime-fix.py
           git add crates/allodium-core/src/github_project.rs
           git add crates/allodium-github/src/project_runtime.rs
           git add crates/allodium-github/src/lib.rs
