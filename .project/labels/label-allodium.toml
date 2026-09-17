@@ -1,0 +1,5 @@
+schema = "allodium.label/v0"
+id = "label-allodium"
+name = "allodium"
+description = "Allodium project-state and projection infrastructure."
+color = "#6f42c1"
