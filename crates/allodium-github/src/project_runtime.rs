@@ -1,10 +1,12 @@
 use super::{GitHubAdapter, project};
-use allodium_core::board::{CanonicalBoard, CanonicalBoardField, CanonicalBoardItem, load_boards};
+use allodium_core::board::{
+    CanonicalBoard, CanonicalBoardField, CanonicalBoardItem, CanonicalBoardView, load_boards,
+};
 use allodium_core::github::GitHubOperation;
 use allodium_core::github_project::{
-    ProjectFieldMapping, ProjectItemMapping, ProjectMapping, ProjectsProjectionConfig,
-    load_observed_project_content, load_observed_projects_capabilities, load_project_mappings,
-    load_projects_projection_config, save_project_mappings,
+    ProjectFieldMapping, ProjectItemMapping, ProjectMapping, ProjectViewMapping,
+    ProjectsProjectionConfig, load_observed_project_content, load_observed_projects_capabilities,
+    load_project_mappings, load_projects_projection_config, save_project_mappings,
 };
 use allodium_core::github_project_observation::load_observed_project_provider_state;
 use serde_json::{Map, Value, json};
@@ -21,6 +23,7 @@ pub(super) enum ProjectsApplyOutcome {
     FieldCreated,
     ItemAdded,
     FieldValueUpdated,
+    ViewCreated,
 }
 
 pub(super) fn apply_operation(
@@ -40,6 +43,7 @@ pub(super) fn apply_operation(
         "create_project_field" => create_field(adapter, root, remote_name, operation),
         "add_project_item" => add_item(adapter, root, remote_name, operation),
         "update_project_field_value" => update_field_value(adapter, root, remote_name, operation),
+        "create_project_view" => create_view(adapter, root, remote_name, operation),
         other => Err(format!("unsupported ProjectV2 runtime operation {other:?}")),
     }
 }
@@ -435,6 +439,167 @@ fn update_field_value(
     Ok(ProjectsApplyOutcome::FieldValueUpdated)
 }
 
+fn create_view(
+    adapter: &GitHubAdapter,
+    root: &Path,
+    remote_name: &str,
+    operation: &GitHubOperation,
+) -> Result<ProjectsApplyOutcome, String> {
+    let (config, token, live_owner_node_id) = authorized_context(adapter, root, remote_name)?;
+    let board = board(root, &operation.canonical_id)?;
+    if binding(&config, &board.record.id)?.target != "managed" {
+        return Err("automatic ProjectV2 view creation is restricted to managed targets".into());
+    }
+    let view_id = tagged(operation, "view:")?;
+    let view = board_view(&board, view_id)?;
+    if view.record.layout == "roadmap" {
+        return Err(
+            "canonical roadmap view semantics are not losslessly representable by the audited GitHub Project view creation API"
+                .into(),
+        );
+    }
+    if !matches!(view.record.layout.as_str(), "table" | "board") {
+        return Err(format!(
+            "unsupported canonical ProjectV2 view layout {:?}",
+            view.record.layout
+        ));
+    }
+
+    let project_mapping =
+        require_fresh_project(adapter, root, remote_name, &token, &board.record.id)?;
+    let observed = load_observed_project_provider_state(root, remote_name, &board.record.id)?
+        .ok_or_else(|| {
+            "ProjectV2 provider-state observation disappeared after freshness check".to_string()
+        })?;
+    let mut mappings = load_project_mappings(root, remote_name)?;
+    let board_mapping = mappings
+        .boards
+        .get_mut(&board.record.id)
+        .ok_or_else(|| "ProjectV2 mapping disappeared after freshness check".to_string())?;
+    if board_mapping.views.contains_key(view_id) {
+        return Err("stale create_project_view plan: canonical view is already mapped".into());
+    }
+
+    let mut body = Map::new();
+    body.insert("name".into(), Value::String(view.record.name.clone()));
+    body.insert("layout".into(), Value::String(view.record.layout.clone()));
+    let expected_vertical_group = if view.record.layout == "board" {
+        let field_id = view
+            .record
+            .group_by
+            .as_deref()
+            .ok_or_else(|| "canonical board view is missing group_by".to_string())?;
+        let field_mapping = project_mapping.fields.get(field_id).ok_or_else(|| {
+            format!(
+                "canonical board view grouping field {field_id:?} has no stable provider mapping"
+            )
+        })?;
+        let provider_field = observed
+            .fields
+            .iter()
+            .find(|field| field.node_id == field_mapping.node_id)
+            .ok_or_else(|| {
+                format!(
+                    "mapped grouping field {field_id:?} is absent from provider-state observation"
+                )
+            })?;
+        let database_id = provider_field.provider_database_id.ok_or_else(|| {
+            format!("mapped grouping field {field_id:?} has no observed provider database ID")
+        })?;
+        if database_id <= 0 {
+            return Err(format!(
+                "mapped grouping field {field_id:?} has non-positive provider database ID"
+            ));
+        }
+        let database_id = database_id as u64;
+        body.insert(
+            "vertical_group_by".into(),
+            Value::Array(vec![Value::Number(database_id.into())]),
+        );
+        Some(database_id)
+    } else {
+        None
+    };
+
+    let path = match config.owner_kind.as_str() {
+        "organization" => format!(
+            "/orgs/{}/projectsV2/{}/views",
+            config.owner, project_mapping.number
+        ),
+        "user" => {
+            let response = adapter
+                .client
+                .get(adapter.api_url(&format!("/users/{}", config.owner)))
+                .bearer_auth(&token)
+                .header("X-GitHub-Api-Version", "2026-03-10")
+                .send()
+                .map_err(|error| format!("GitHub user identity bridge request failed: {error}"))?;
+            let user = projects_rest_json(response, "GitHub user identity bridge")?;
+            let database_id = required_u64(&user, "id")?;
+            let node_id = required_str(&user, "node_id")?;
+            if node_id != live_owner_node_id {
+                return Err(
+                    "GitHub REST user identity disagrees with the live authorized Projects owner node"
+                        .into(),
+                );
+            }
+            format!(
+                "/users/{database_id}/projectsV2/{}/views",
+                project_mapping.number
+            )
+        }
+        other => return Err(format!("unsupported GitHub Projects owner kind {other:?}")),
+    };
+
+    let response = adapter
+        .client
+        .post(adapter.api_url(&path))
+        .bearer_auth(&token)
+        .header("X-GitHub-Api-Version", "2026-03-10")
+        .json(&Value::Object(body))
+        .send()
+        .map_err(|error| format!("GitHub Project view creation request failed: {error}"))?;
+    let payload = projects_rest_json(response, "GitHub Project view creation")?;
+    let created = payload.get("value").unwrap_or(&payload);
+    let node_id = required_str(created, "node_id")?;
+    if required_str(created, "name")? != view.record.name
+        || required_str(created, "layout")? != view.record.layout
+    {
+        return Err("created GitHub Project view returned unexpected name or layout".into());
+    }
+    if let Some(expected) = expected_vertical_group {
+        let actual = created
+            .get("vertical_group_by")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "created GitHub board view returned no vertical_group_by".to_string())?;
+        if actual.len() != 1 || actual[0].as_u64() != Some(expected) {
+            return Err(
+                "created GitHub board view returned unexpected vertical grouping identity".into(),
+            );
+        }
+    }
+
+    board_mapping
+        .views
+        .insert(view.record.id.clone(), ProjectViewMapping { node_id });
+    save_project_mappings(root, remote_name, &mappings)?;
+    Ok(ProjectsApplyOutcome::ViewCreated)
+}
+
+fn projects_rest_json(
+    response: reqwest::blocking::Response,
+    context: &str,
+) -> Result<Value, String> {
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("{context} response body could not be read: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("{context} returned {status}: {body}"));
+    }
+    serde_json::from_str(&body).map_err(|error| format!("{context} returned invalid JSON: {error}"))
+}
+
 fn authorized_context(
     adapter: &GitHubAdapter,
     root: &Path,
@@ -558,6 +723,17 @@ fn board_field<'a>(
         .iter()
         .find(|field| field.record.id == field_id)
         .ok_or_else(|| format!("canonical board field {field_id:?} no longer exists"))
+}
+
+fn board_view<'a>(
+    board: &'a CanonicalBoard,
+    view_id: &str,
+) -> Result<&'a CanonicalBoardView, String> {
+    board
+        .views
+        .iter()
+        .find(|view| view.record.id == view_id)
+        .ok_or_else(|| format!("canonical board view {view_id:?} no longer exists"))
 }
 
 fn board_item<'a>(
@@ -700,6 +876,134 @@ mod tests {
                 .iter()
                 .any(|request| request.contains("repo-token"))
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_board_view_uses_verified_rest_identity_bridge_and_vertical_grouping() {
+        use allodium_core::github_project_observation::{
+            ObservedProviderField, ObservedProviderOption,
+        };
+
+        let root = test_root("view-create");
+        write_ready_root(&root, "ALLODIUM_RUNTIME_VIEW_CREATE");
+        fs::write(
+            root.join(".project/boards/board-0001/fields/status.toml"),
+            "schema = \"allodium.board-field/v0\"\nid = \"status\"\nname = \"Status\"\nkind = \"single_select\"\n\n[[options]]\nid = \"active\"\nname = \"Active\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".project/boards/board-0001/views/development.toml"),
+            "schema = \"allodium.board-view/v0\"\nid = \"development\"\nname = \"Development\"\nlayout = \"board\"\ngroup_by = \"status\"\n",
+        )
+        .unwrap();
+        let mut boards = BTreeMap::new();
+        boards.insert(
+            "board-0001".into(),
+            ProjectMapping {
+                number: 7,
+                node_id: "PVT_project".into(),
+                url: "https://github.com/users/sguzman/projects/7".into(),
+                owner_node_id: "U_owner".into(),
+                items: BTreeMap::new(),
+                fields: BTreeMap::from([(
+                    "status".into(),
+                    ProjectFieldMapping {
+                        node_id: "PVTSSF_status".into(),
+                        data_type: "SINGLE_SELECT".into(),
+                        options: BTreeMap::from([("active".into(), "option-active".into())]),
+                    },
+                )]),
+                views: BTreeMap::new(),
+            },
+        );
+        save_project_mappings(
+            &root,
+            "github",
+            &ProjectMappings {
+                schema: PROJECT_MAPPINGS_SCHEMA_V0.into(),
+                boards,
+            },
+        )
+        .unwrap();
+        write_observed_project_provider_state(
+            &root,
+            "github",
+            &ObservedProjectProviderState {
+                schema: OBSERVED_PROJECT_PROVIDER_STATE_SCHEMA_V0.into(),
+                canonical_id: "board-0001".into(),
+                number: 7,
+                node_id: "PVT_project".into(),
+                url: "https://github.com/users/sguzman/projects/7".into(),
+                owner_node_id: "U_owner".into(),
+                title: "Board".into(),
+                short_description: String::new(),
+                closed: false,
+                remote_updated_at: "2026-09-17T20:00:00Z".into(),
+                observed_at: "2026-09-17T20:00:30Z".into(),
+                fields: vec![ObservedProviderField {
+                    node_id: "PVTSSF_status".into(),
+                    provider_type: "ProjectV2SingleSelectField".into(),
+                    name: "Status".into(),
+                    data_type: "SINGLE_SELECT".into(),
+                    provider_database_id: Some(101),
+                    remote_updated_at: "2026-09-17T20:00:00Z".into(),
+                    options: vec![ObservedProviderOption {
+                        id: "option-active".into(),
+                        name: "Active".into(),
+                        description: "allodium:status:active".into(),
+                        color: "BLUE".into(),
+                    }],
+                    iterations: Vec::new(),
+                }],
+                items: Vec::new(),
+                views: Vec::new(),
+            },
+        )
+        .unwrap();
+        unsafe { env::set_var("ALLODIUM_RUNTIME_VIEW_CREATE", "projects-token") };
+        let project = r#"{"data":{"node":{"id":"PVT_project","number":7,"url":"https://github.com/users/sguzman/projects/7","title":"Board","shortDescription":"","closed":false,"updatedAt":"2026-09-17T20:00:00Z","owner":{"id":"U_owner"},"fields":{"nodes":[{"__typename":"ProjectV2SingleSelectField","id":"PVTSSF_status","databaseId":101,"name":"Status","dataType":"SINGLE_SELECT","updatedAt":"2026-09-17T20:00:00Z","options":[{"id":"option-active","name":"Active","description":"allodium:status:active","color":"BLUE"}]}],"pageInfo":{"hasNextPage":false}},"views":{"nodes":[],"pageInfo":{"hasNextPage":false}},"items":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}"#;
+        let responses = vec![
+            json_response(
+                200,
+                r#"{"data":{"user":{"id":"U_owner","projectsV2":{"totalCount":1}}}}"#,
+            ),
+            json_response(200, project),
+            json_response(
+                200,
+                r#"{"id":6679733,"node_id":"U_owner","login":"sguzman"}"#,
+            ),
+            json_response(
+                201,
+                r#"{"value":{"id":201,"number":2,"node_id":"PVTV_development","name":"Development","layout":"board","vertical_group_by":[101]}}"#,
+            ),
+        ];
+        let (base, requests, handle) = response_server(responses);
+        let operation = GitHubOperation {
+            canonical_id: "board-0001".into(),
+            action: "create_project_view".into(),
+            number: Some(7),
+            fields: vec!["view:development".into()],
+            reason: "test".into(),
+        };
+        assert_eq!(
+            apply_operation(&test_adapter(base), &root, "github", &operation).unwrap(),
+            ProjectsApplyOutcome::ViewCreated
+        );
+        handle.join().unwrap();
+        unsafe { env::remove_var("ALLODIUM_RUNTIME_VIEW_CREATE") };
+        let mappings = load_project_mappings(&root, "github").unwrap();
+        assert_eq!(
+            mappings.boards["board-0001"].views["development"].node_id,
+            "PVTV_development"
+        );
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests[2].starts_with("GET /users/sguzman "));
+        assert!(requests[3].starts_with("POST /users/6679733/projectsV2/7/views "));
+        assert!(requests[3].contains("authorization: Bearer projects-token"));
+        assert!(requests[3].contains("\"vertical_group_by\":[101]"));
+        assert!(!requests[3].contains("repo-token"));
         fs::remove_dir_all(root).unwrap();
     }
 

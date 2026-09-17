@@ -369,6 +369,10 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
                 report.project_field_values_updated
             );
             println!(
+                "created {} GitHub ProjectV2 view(s)",
+                report.project_views_created
+            );
+            println!(
                 "{} GitHub Projects projection(s) require configuration",
                 report.projects_config_required
             );

@@ -567,14 +567,129 @@ fn plan_board(
     }
 
     for view in &board.views {
-        if !mapping.views.contains_key(&view.record.id) {
+        let expected_layout = match view.record.layout.as_str() {
+            "table" => "TABLE_LAYOUT",
+            "board" => "BOARD_LAYOUT",
+            "roadmap" => "ROADMAP_LAYOUT",
+            other => return Err(format!("unsupported canonical board view layout {other:?}")),
+        };
+        let Some(view_mapping) = mapping.views.get(&view.record.id) else {
+            if binding.target != "managed" {
+                operations.push(runtime_requirement(
+                    &board.record.id,
+                    Some(mapping.number),
+                    vec![format!("view-binding:{}", view.record.id)],
+                    "existing ProjectV2 target has no explicit stable view mapping; refusing name-based view identity",
+                ));
+                return Ok(());
+            }
+            if view.record.layout == "roadmap" {
+                operations.push(runtime_requirement(
+                    &board.record.id,
+                    Some(mapping.number),
+                    vec![format!("view-semantics:{}", view.record.id)],
+                    "canonical roadmap start/end-field semantics do not have an audited lossless GitHub Project view creation representation",
+                ));
+                return Ok(());
+            }
+            if view.record.layout == "board" {
+                let field_id = view
+                    .record
+                    .group_by
+                    .as_deref()
+                    .expect("validated canonical board view has group_by");
+                let field_mapping = mapping.fields.get(field_id).ok_or_else(|| {
+                    format!(
+                        "board view {:?} grouping field has no stable provider field mapping",
+                        view.record.id
+                    )
+                })?;
+                let Some(provider_field) = provider_state
+                    .fields
+                    .iter()
+                    .find(|field| field.node_id == field_mapping.node_id)
+                else {
+                    operations.push(runtime_requirement(
+                        &board.record.id,
+                        Some(mapping.number),
+                        vec![format!("view-field-observation:{}:{}", view.record.id, field_id)],
+                        "canonical board view grouping field is mapped but absent from the persisted provider-state observation",
+                    ));
+                    return Ok(());
+                };
+                if provider_field.provider_database_id.is_none_or(|id| id <= 0) {
+                    operations.push(runtime_requirement(
+                        &board.record.id,
+                        Some(mapping.number),
+                        vec![format!("view-field-bridge:{}:{}", view.record.id, field_id)],
+                        "canonical board view grouping requires the observed positive provider database field ID used by GitHub's REST view API",
+                    ));
+                    return Ok(());
+                }
+            }
+            operations.push(project_operation(
+                &board.record.id,
+                "create_project_view",
+                Some(mapping.number),
+                vec![format!("view:{}", view.record.id)],
+                "managed ProjectV2 is missing a stable provider view mapping and the canonical view has an audited lossless create-once representation",
+            ));
+            return Ok(());
+        };
+
+        let Some(provider_view) = provider_state
+            .views
+            .iter()
+            .find(|view| view.node_id == view_mapping.node_id)
+        else {
             operations.push(runtime_requirement(
                 &board.record.id,
                 Some(mapping.number),
-                vec![format!("view:{}", view.record.id)],
-                "ProjectV2 view creation/binding remains outside the first non-destructive mutation slice",
+                vec![format!("view-identity-review:{}", view.record.id)],
+                "mapped ProjectV2 view is absent from the persisted provider-state observation",
             ));
             return Ok(());
+        };
+        if view.record.layout == "roadmap" {
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("view-semantics:{}", view.record.id)],
+                "mapped roadmap view cannot yet be audited against canonical start/end-field semantics without loss",
+            ));
+            return Ok(());
+        }
+        if provider_view.name != view.record.name || provider_view.layout != expected_layout {
+            operations.push(runtime_requirement(
+                &board.record.id,
+                Some(mapping.number),
+                vec![format!("view-drift-review:{}", view.record.id)],
+                "mapped ProjectV2 view name or layout drifted; v0 view projection is immutable-after-create and requires review",
+            ));
+            return Ok(());
+        }
+        if view.record.layout == "board" {
+            let field_id = view
+                .record
+                .group_by
+                .as_deref()
+                .expect("validated canonical board view has group_by");
+            let field_mapping = mapping.fields.get(field_id).ok_or_else(|| {
+                format!(
+                    "board view {:?} grouping field has no stable provider field mapping",
+                    view.record.id
+                )
+            })?;
+            if provider_view.vertical_group_by_field_node_ids != vec![field_mapping.node_id.clone()]
+            {
+                operations.push(runtime_requirement(
+                    &board.record.id,
+                    Some(mapping.number),
+                    vec![format!("view-drift-review:{}", view.record.id)],
+                    "mapped ProjectV2 board view columns no longer match the canonical group_by field; v0 refuses automatic view reconfiguration",
+                ));
+                return Ok(());
+            }
         }
     }
 
@@ -1131,6 +1246,24 @@ mod tests {
             fs::read_to_string(root.join(".project/boards/board-0001/board.toml")).unwrap();
         assert!(!canonical.contains("PVT_"));
         assert!(!canonical.contains("PVTI_"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_board_view_creation_uses_stable_field_bridge_and_ignores_same_name_foreign_view() {
+        let root = ready_root("view-create", "managed", None);
+        write_project_mapping(&root, true);
+        let mut mappings = load_project_mappings(&root, "github").unwrap();
+        mappings.boards.get_mut("board-0001").unwrap().views.clear();
+        save_project_mappings(&root, "github", &mappings).unwrap();
+        write_observed_project_fixture(&root);
+        write_provider_state_fixture(&root, true);
+        write_issue_mapping(&root);
+        write_content_identity(&root);
+        let plan = plan_boards(&root, "github").unwrap();
+        assert_eq!(plan.operations.len(), 1);
+        assert_eq!(plan.operations[0].action, "create_project_view");
+        assert_eq!(plan.operations[0].fields, vec!["view:development"]);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -118,6 +118,7 @@ pub struct ApplyReport {
     pub project_fields_created: usize,
     pub project_items_added: usize,
     pub project_field_values_updated: usize,
+    pub project_views_created: usize,
     pub projects_config_required: usize,
     pub projects_auth_required: usize,
     pub projects_owner_review_required: usize,
@@ -799,7 +800,8 @@ impl GitHubAdapter {
                 | "update_project"
                 | "create_project_field"
                 | "add_project_item"
-                | "update_project_field_value" => {
+                | "update_project_field_value"
+                | "create_project_view" => {
                     match project_runtime::apply_operation(self, root, &plan.remote, operation)? {
                         project_runtime::ProjectsApplyOutcome::Created => {
                             report.projects_created += 1
@@ -819,6 +821,9 @@ impl GitHubAdapter {
                         }
                         project_runtime::ProjectsApplyOutcome::FieldValueUpdated => {
                             report.project_field_values_updated += 1
+                        }
+                        project_runtime::ProjectsApplyOutcome::ViewCreated => {
+                            report.project_views_created += 1
                         }
                     }
                 }
