@@ -26,12 +26,12 @@ Canonical board membership should initially reference object families Allodium a
 
 ## Acceptance criteria
 
-- [ ] Define an ordinary-file `allodium.board/v0` canonical root under `.project/boards/` with project-owned identity, title, description, and explicit item membership.
-- [ ] Make board items refer to canonical Allodium object IDs instead of copying provider IDs or making GitHub Project items authoritative.
-- [ ] Define typed canonical board fields separately from item values; reject values that do not conform to their field type.
-- [ ] Define views separately from board data so table/board/roadmap presentation does not redefine item state.
-- [ ] Model board grouping as a view operation over a field; do not introduce canonical column objects merely because one provider renders columns.
-- [ ] Validate duplicate IDs, dangling item references, unknown field references, invalid option references, and incompatible field values.
+- [x] Define an ordinary-file `allodium.board/v0` canonical root under `.project/boards/` with project-owned identity, title, description, and explicit item membership.
+- [x] Make board items refer to canonical Allodium object IDs instead of copying provider IDs or making GitHub Project items authoritative.
+- [x] Define typed canonical board fields separately from item values; reject values that do not conform to their field type.
+- [x] Define views separately from board data so table/board/roadmap presentation does not redefine item state.
+- [x] Model board grouping as a view operation over a field; do not introduce canonical column objects merely because one provider renders columns.
+- [x] Validate duplicate IDs, dangling item references, unknown field references, invalid option references, and incompatible field values.
 - [ ] Keep GitHub Project number/node ID, item IDs, field IDs, option/iteration IDs, view IDs, URLs, and owner identity under `.project/remotes/github/` only.
 - [ ] Require explicit provider configuration for the GitHub Project owner authority (`user` or `organization`) and projection target; do not infer cross-authority identity from matching names.
 - [ ] Establish a separate Projects credential/capability boundary. Repository `GITHUB_TOKEN` must not be treated as sufficient Projects authority.
@@ -42,14 +42,22 @@ Canonical board membership should initially reference object families Allodium a
 - [ ] Preserve provider-created items, field edits, and other foreign Project activity as GitHub-scoped evidence before deciding whether any subset should be promoted.
 - [ ] Use stable provider identities for mappings and optimistic observation checks before mutable writes.
 - [ ] Do not implement destructive Project/item deletion until the canonical absence semantics are explicit.
-- [ ] Add fixtures/tests that prove the canonical board model is independent of GitHub ProjectV2 IDs and provider view vocabulary.
+- [x] Add fixtures/tests that prove the canonical board model is independent of GitHub ProjectV2 IDs and provider view vocabulary.
 - [ ] If a separately authorized Projects credential is available, dogfood one Allodium board through provider creation/mapping, item projection, field/value reconciliation, provider drift archival, and idempotent re-observation.
+
+## Canonical core progress
+
+The canonical-only increment is now executable and dogfooded. `allodium.board/v0` is represented by ordinary files under `.project/boards/<board-id>/`, with independent `fields/`, `items/`, and `views/` directories. The checked-in `board-0001` tracks canonical `issue-0010` and `issue-0011`; its development board view groups the project-owned `status` field, while its roadmap view references the project-owned `target-date` field. There is no canonical column object and no GitHub ProjectV2 identifier anywhere in this representation.
+
+The validator now enforces board/directory identity, field and view filename identity, supported field/value types, stable single-select option IDs, canonical issue/review membership, no dangling or duplicate item membership, known field/value references, valid select options, strict calendar dates, and layout-specific view rules. Checked-in valid and invalid board fixtures and module-level tests passed the full locked workspace gate. `docs/boards-v0.md` documents the format and provider boundary.
+
+This increment deliberately contains no GitHub Projects mapping, observation, planner, or runtime. The next layer is provider configuration plus a deterministic offline planner that can represent the separate Projects authentication boundary without giving GitHub ProjectV2 authority over the canonical board.
 
 ## Design constraints
 
 This slice should resist two opposite failures. It must not reduce Allodium to a lowest-common-denominator fake forge API, but it also must not make GitHub's flexible ProjectV2 schema the ontology of the project itself. Provider richness can live in the GitHub adapter and remote namespace while the canonical board remains directly understandable and editable with ordinary filesystem tools.
 
-The first implementation increment should therefore be canonical-only: board/field/value/view records plus validation and fixtures. GitHub mapping and runtime follow only after that format is executable.
+The first implementation increment is therefore canonical-only: board/field/value/view records plus validation and fixtures. GitHub mapping and runtime follow only after that format is executable.
 
 This issue is canonical Allodium state. Any GitHub Issue projection of this work item is downstream.
 
