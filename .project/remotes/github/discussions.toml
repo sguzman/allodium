@@ -1,0 +1,4 @@
+schema = "allodium.github.discussion-projection/v0"
+
+[discussions.discussion-0001]
+category_slug = "general"
