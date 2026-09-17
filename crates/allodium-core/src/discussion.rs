@@ -120,7 +120,13 @@ mod tests {
     #[test]
     fn validator_accepts_discussion() {
         let root = test_root("valid");
-        write_discussion(&root, "discussion-0001", "discussion-0001", "General", "open");
+        write_discussion(
+            &root,
+            "discussion-0001",
+            "discussion-0001",
+            "General",
+            "open",
+        );
 
         let report = crate::validate(&root);
         assert!(report.is_ok(), "{:?}", report.errors);
@@ -130,7 +136,13 @@ mod tests {
     #[test]
     fn validator_rejects_discussion_identity_mismatch() {
         let root = test_root("mismatch");
-        write_discussion(&root, "discussion-0001", "discussion-9999", "General", "open");
+        write_discussion(
+            &root,
+            "discussion-0001",
+            "discussion-9999",
+            "General",
+            "open",
+        );
 
         let report = crate::validate(&root);
         assert!(!report.is_ok());
@@ -146,7 +158,13 @@ mod tests {
     #[test]
     fn validator_rejects_empty_title_and_invalid_state() {
         let root = test_root("invalid");
-        write_discussion(&root, "discussion-0001", "discussion-0001", "   ", "deleted");
+        write_discussion(
+            &root,
+            "discussion-0001",
+            "discussion-0001",
+            "   ",
+            "deleted",
+        );
 
         let report = crate::validate(&root);
         assert!(!report.is_ok());
