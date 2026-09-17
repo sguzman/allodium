@@ -133,7 +133,12 @@ observe_replacement = observe_anchor + '''            println!(
                 report.discussion_managed_changes_archived
             );
 '''
-cli = replace_once(cli, observe_anchor, observe_replacement, "CLI observe discussion output")
+observe_count = cli.count(observe_anchor)
+if observe_count != 2:
+    raise SystemExit(
+        f"CLI Discussion capability output: expected exactly two anchors, found {observe_count}"
+    )
+cli = cli.replace(observe_anchor, observe_replacement, 1)
 
 apply_anchor = '''            println!(
                 "observed {} GitHub Discussion capability snapshot(s)",
