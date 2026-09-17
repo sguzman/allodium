@@ -43,8 +43,8 @@ pub fn load_labels(root: impl AsRef<Path>) -> Result<Vec<CanonicalLabel>, String
         if !path.is_file() || path.extension().and_then(|value| value.to_str()) != Some("toml") {
             continue;
         }
-        let text = fs::read_to_string(&path)
-            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let text =
+            fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
         let record: LabelRecord =
             toml::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
         labels.push(CanonicalLabel { record, path });
@@ -92,10 +92,9 @@ pub(crate) fn validate_labels(root: &Path, report: &mut ValidationReport) {
         }
         if let Some(color) = &label.record.color {
             if !valid_color(color) {
-                report.errors.push(format!(
-                    "{}: color must be #RRGGBB",
-                    label.path.display()
-                ));
+                report
+                    .errors
+                    .push(format!("{}: color must be #RRGGBB", label.path.display()));
             }
         }
     }
@@ -165,8 +164,18 @@ mod tests {
 
         let report = crate::validate(&root);
         assert!(!report.is_ok());
-        assert!(report.errors.iter().any(|error| error.contains("name must not be empty")));
-        assert!(report.errors.iter().any(|error| error.contains("color must be #RRGGBB")));
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("name must not be empty"))
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("color must be #RRGGBB"))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
