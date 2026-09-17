@@ -1,0 +1,56 @@
+name: M4 discussion core gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/m4-discussion-core.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+      - name: Wire discussion core
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('crates/allodium-core/src/lib.rs')
+          text = path.read_text()
+          if 'pub mod discussion;\n' not in text:
+              text = text.replace('pub mod github;\n', 'pub mod discussion;\npub mod github;\n', 1)
+          marker = '    label::validate_labels(root, &mut report);\n'
+          if 'discussion::validate_discussions(root, &mut report);\n' not in text:
+              if marker not in text:
+                  raise SystemExit('validation insertion marker missing')
+              text = text.replace(marker, '    discussion::validate_discussions(root, &mut report);\n' + marker, 1)
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+      - name: Publish clean product tree
+        run: |
+          set -euo pipefail
+          git config user.name 'Allodium implementation gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/m4-discussion-core.yml
+          git add crates/allodium-core/src/lib.rs crates/allodium-core/src/discussion.rs
+          git commit -m 'feat(core): add canonical discussion records'
+          git fetch origin main
+          git rebase origin/main
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          git push origin HEAD:main
