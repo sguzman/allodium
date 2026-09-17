@@ -2,6 +2,7 @@ mod discussion;
 mod discussion_ingress;
 mod label;
 mod milestone;
+mod project;
 mod release;
 mod review_ingress;
 mod wiki;
@@ -59,6 +60,7 @@ pub struct ObserveReport {
     pub discussions_observed: usize,
     pub discussion_managed_changes_archived: usize,
     pub discussion_social_snapshots_archived: usize,
+    pub projects_capabilities_observed: usize,
     pub review_conversation_comment_snapshots_archived: usize,
     pub review_submission_snapshots_archived: usize,
     pub review_inline_comment_snapshots_archived: usize,
@@ -103,6 +105,11 @@ pub struct ApplyReport {
     pub discussion_category_required: usize,
     pub discussion_category_review_required: usize,
     pub discussion_category_change_unsupported: usize,
+    pub projects_capabilities_observed: usize,
+    pub projects_config_required: usize,
+    pub projects_auth_required: usize,
+    pub projects_owner_review_required: usize,
+    pub projects_runtime_required: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -380,6 +387,9 @@ impl GitHubAdapter {
         report.discussions_observed += discussion_report.observed;
         report.discussion_managed_changes_archived += discussion_report.managed_changes_archived;
         report.discussion_social_snapshots_archived += discussion_report.social_snapshots_archived;
+
+        let projects_report = project::observe_projects_capabilities(self, root, remote_name)?;
+        report.projects_capabilities_observed += projects_report.capabilities_observed;
 
         for issue in self.fetch_repository_issues()? {
             if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {
@@ -736,6 +746,23 @@ impl GitHubAdapter {
                         number,
                     )?;
                     report.discussions_reopened += 1;
+                }
+                "observe_projects_capabilities" => {
+                    let projects =
+                        project::observe_projects_capabilities(self, root, &plan.remote)?;
+                    report.projects_capabilities_observed += projects.capabilities_observed;
+                }
+                "projects_config_required" => {
+                    report.projects_config_required += 1;
+                }
+                "projects_auth_required" => {
+                    report.projects_auth_required += 1;
+                }
+                "projects_owner_review_required" => {
+                    report.projects_owner_review_required += 1;
+                }
+                "projects_runtime_required" => {
+                    report.projects_runtime_required += 1;
                 }
                 "observe_wiki" => {
                     let wiki_report = wiki::observe_wiki(self, root, &plan.remote)?;

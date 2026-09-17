@@ -1,0 +1,7 @@
+schema = "allodium.github.projects-projection/v0"
+owner_kind = "user"
+owner = "sguzman"
+credential_env = "ALLODIUM_GITHUB_PROJECTS_TOKEN"
+
+[boards.board-0001]
+enabled = true

@@ -131,6 +131,14 @@ fn github_plan(root: PathBuf, remote_name: &str) -> ExitCode {
             );
         }
         plan.operations.extend(discussion_plan.operations);
+
+        let projects_plan = allodium_core::github_project::plan_boards(&root, remote_name)?;
+        if plan.remote != projects_plan.remote || plan.repository != projects_plan.repository {
+            return Err(
+                "GitHub Projects projection plan disagrees about the configured remote".into(),
+            );
+        }
+        plan.operations.extend(projects_plan.operations);
         Ok(plan)
     });
 
@@ -164,6 +172,10 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
             println!(
                 "observed {} mapped GitHub Discussion(s)",
                 report.discussions_observed
+            );
+            println!(
+                "observed {} GitHub Projects capability snapshot(s)",
+                report.projects_capabilities_observed
             );
             println!(
                 "archived {} GitHub Discussion managed-field remote change(s)",
@@ -307,6 +319,26 @@ fn github_apply(plan_path: PathBuf, root: PathBuf) -> ExitCode {
             println!(
                 "{} GitHub Discussion projection(s) request unsupported category reclassification",
                 report.discussion_category_change_unsupported
+            );
+            println!(
+                "observed {} GitHub Projects capability snapshot(s)",
+                report.projects_capabilities_observed
+            );
+            println!(
+                "{} GitHub Projects projection(s) require configuration",
+                report.projects_config_required
+            );
+            println!(
+                "{} GitHub Projects projection(s) require separate authorization",
+                report.projects_auth_required
+            );
+            println!(
+                "{} GitHub Projects projection(s) require owner review",
+                report.projects_owner_review_required
+            );
+            println!(
+                "{} GitHub Projects projection(s) are waiting for ProjectV2 runtime",
+                report.projects_runtime_required
             );
             ExitCode::SUCCESS
         }
