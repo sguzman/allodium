@@ -48,3 +48,11 @@ text = text.replace(
 1,
 )
 core.write_text(text)
+
+project = Path("crates/allodium-github/src/project.rs")
+project_text = project.read_text()
+old_import = "    ObservedProviderItem, ObservedProviderIteration, ObservedProviderOption, ObservedProviderView,\n"
+new_import = "    ObservedProviderItem, ObservedProviderIteration, ObservedProviderOption, ObservedProviderView,\n    ObservedProviderViewSort,\n"
+if old_import not in project_text:
+    raise SystemExit("expected ProjectV2 observation import anchor not found")
+project.write_text(project_text.replace(old_import, new_import, 1))
