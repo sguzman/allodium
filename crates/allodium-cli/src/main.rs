@@ -114,6 +114,14 @@ fn github_plan(root: PathBuf, remote_name: &str) -> ExitCode {
             );
         }
         plan.operations.extend(milestone_plan.operations);
+
+        let label_plan = allodium_core::github_label::plan_labels(&root, remote_name)?;
+        if plan.remote != label_plan.remote || plan.repository != label_plan.repository {
+            return Err(
+                "GitHub label projection plan disagrees about the configured remote".into(),
+            );
+        }
+        plan.operations.extend(label_plan.operations);
         Ok(plan)
     });
 

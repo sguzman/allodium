@@ -200,8 +200,9 @@ fn plan_label(
             action: "update_label".into(),
             number: Some(mapping.remote_id),
             fields,
-            reason: "canonical managed label fields differ from the last observed GitHub label state"
-                .into(),
+            reason:
+                "canonical managed label fields differ from the last observed GitHub label state"
+                    .into(),
         });
     }
     Ok(())
