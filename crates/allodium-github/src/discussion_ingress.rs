@@ -425,7 +425,8 @@ fn fetch_social_state(
         number: mapping.number,
         node_id: mapping.node_id.clone(),
         url: mapping.url.clone(),
-        root: root.ok_or_else(|| "GitHub Discussion social query produced no root state".to_string())?,
+        root: root
+            .ok_or_else(|| "GitHub Discussion social query produced no root state".to_string())?,
         comments,
     })
 }
@@ -791,8 +792,8 @@ fn record_social_snapshot(
             source: IncomingSource {
                 remote_object_type: "discussion".into(),
                 remote_object_id: state.node_id.clone(),
-                created_at: state.root.created_at.clone(),
-                updated_at: state.root.updated_at.clone(),
+                created_at: Some(state.root.created_at.clone()),
+                updated_at: Some(state.root.updated_at.clone()),
                 url: state.url.clone(),
             },
         };
@@ -805,8 +806,11 @@ fn record_social_snapshot(
             .map_err(|error| format!("{}: {error}", directory.display()))?;
     }
 
-    fs::create_dir_all(path.parent().expect("Discussion social observation path has parent"))
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+    fs::create_dir_all(
+        path.parent()
+            .expect("Discussion social observation path has parent"),
+    )
+    .map_err(|error| format!("{}: {error}", path.display()))?;
     fs::write(&path, current_json).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(1)
 }
@@ -837,13 +841,11 @@ mod tests {
         let root = test_root("archive");
         let first = sample_state(0);
         assert_eq!(
-            record_social_snapshot(&root, "github", first.clone(), "2026-09-17T12:00:00Z")
-                .unwrap(),
+            record_social_snapshot(&root, "github", first.clone(), "2026-09-17T12:00:00Z").unwrap(),
             1
         );
         assert_eq!(
-            record_social_snapshot(&root, "github", first.clone(), "2026-09-17T12:01:00Z")
-                .unwrap(),
+            record_social_snapshot(&root, "github", first.clone(), "2026-09-17T12:01:00Z").unwrap(),
             0
         );
         let mut changed = first;
@@ -857,12 +859,8 @@ mod tests {
         );
         let incoming = root.join(".project/remotes/github/incoming/2026/09");
         assert_eq!(fs::read_dir(incoming).unwrap().count(), 2);
-        let observed = fs::read_to_string(observed_social_path(
-            &root,
-            "github",
-            "discussion-0001",
-        ))
-        .unwrap();
+        let observed =
+            fs::read_to_string(observed_social_path(&root, "github", "discussion-0001")).unwrap();
         assert!(observed.contains("OFF_TOPIC"));
         assert!(observed.contains("\"upvote_count\": 1"));
         fs::remove_dir_all(root).unwrap();
@@ -891,7 +889,9 @@ mod tests {
     }
 
     fn normalize_state(state: &mut DiscussionSocialState) {
-        state.comments.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+        state
+            .comments
+            .sort_by(|left, right| left.node_id.cmp(&right.node_id));
         state
             .root
             .reaction_groups
@@ -902,7 +902,8 @@ mod tests {
                 .sort_by(|left, right| left.content.cmp(&right.content));
         }
         if let Some(poll) = &mut state.root.poll {
-            poll.options.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+            poll.options
+                .sort_by(|left, right| left.node_id.cmp(&right.node_id));
         }
     }
 

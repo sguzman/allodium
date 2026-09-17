@@ -1,4 +1,5 @@
 mod discussion;
+mod discussion_ingress;
 mod label;
 mod milestone;
 mod release;
@@ -57,6 +58,7 @@ pub struct ObserveReport {
     pub discussion_capabilities_observed: usize,
     pub discussions_observed: usize,
     pub discussion_managed_changes_archived: usize,
+    pub discussion_social_snapshots_archived: usize,
     pub review_conversation_comment_snapshots_archived: usize,
     pub review_submission_snapshots_archived: usize,
     pub review_inline_comment_snapshots_archived: usize,
@@ -377,6 +379,7 @@ impl GitHubAdapter {
         report.discussion_capabilities_observed += discussion_report.capabilities_observed;
         report.discussions_observed += discussion_report.observed;
         report.discussion_managed_changes_archived += discussion_report.managed_changes_archived;
+        report.discussion_social_snapshots_archived += discussion_report.social_snapshots_archived;
 
         for issue in self.fetch_repository_issues()? {
             if issue.pull_request.is_some() || mapped_numbers.contains(&issue.number) {

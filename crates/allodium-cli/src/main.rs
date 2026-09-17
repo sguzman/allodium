@@ -170,6 +170,10 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
                 report.discussion_managed_changes_archived
             );
             println!(
+                "archived {} GitHub Discussion social snapshot change(s)",
+                report.discussion_social_snapshots_archived
+            );
+            println!(
                 "archived {} GitHub Wiki remote-tree change(s)",
                 report.wiki_remote_changes_archived
             );

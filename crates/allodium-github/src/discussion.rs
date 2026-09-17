@@ -1,11 +1,10 @@
 use super::{GitHubAdapter, incoming_directory, now, write_toml};
 use allodium_core::discussion::{CanonicalDiscussion, load_discussions};
 use allodium_core::github_discussion::{
-    DISCUSSION_MAPPINGS_SCHEMA_V0, DiscussionMapping, DiscussionMappings,
-    OBSERVED_DISCUSSION_CAPABILITIES_SCHEMA_V0, OBSERVED_DISCUSSION_SCHEMA_V0, ObservedDiscussion,
-    ObservedDiscussionCapabilities, ObservedDiscussionCategory, ObservedDiscussionSnapshot,
-    load_discussion_mappings, load_discussion_projection_config, load_observed_discussion,
-    load_observed_discussion_capabilities, save_discussion_mappings,
+    DiscussionMapping, OBSERVED_DISCUSSION_CAPABILITIES_SCHEMA_V0, OBSERVED_DISCUSSION_SCHEMA_V0,
+    ObservedDiscussion, ObservedDiscussionCapabilities, ObservedDiscussionCategory,
+    ObservedDiscussionSnapshot, load_discussion_mappings, load_discussion_projection_config,
+    load_observed_discussion, load_observed_discussion_capabilities, save_discussion_mappings,
     write_observed_discussion_capabilities, write_observed_discussion_snapshot,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -22,6 +21,7 @@ pub(super) struct DiscussionObserveReport {
     pub capabilities_observed: usize,
     pub observed: usize,
     pub managed_changes_archived: usize,
+    pub social_snapshots_archived: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -179,6 +179,14 @@ pub(super) fn observe_discussions(
         }
         write_observed_discussion_snapshot(root, remote_name, &snapshot)?;
         report.observed += 1;
+        report.social_snapshots_archived += super::discussion_ingress::archive_discussion_social(
+            adapter,
+            root,
+            remote_name,
+            &canonical_id,
+            &mapping,
+            &now(),
+        )?;
     }
 
     Ok(report)
@@ -842,7 +850,7 @@ mod tests {
     use super::*;
     use allodium_core::discussion::{DISCUSSION_SCHEMA_V0, DiscussionRecord};
     use allodium_core::github_discussion::{
-        DiscussionProjectionBinding, DiscussionProjectionConfig, write_observed_discussion_snapshot,
+        DISCUSSION_MAPPINGS_SCHEMA_V0, DiscussionMappings, write_observed_discussion_snapshot,
     };
     use std::io::{Read, Write};
     use std::net::TcpListener;
