@@ -160,7 +160,6 @@ fn github_observe(root: PathBuf, remote_name: &str) -> ExitCode {
                 "archived {} GitHub milestone managed-field remote change(s)",
                 report.milestone_managed_changes_archived
             );
-            println!("observed {} GitHub label(s)", report.labels_observed);
             println!(
                 "archived {} GitHub label managed-field remote change(s)",
                 report.label_managed_changes_archived
