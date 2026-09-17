@@ -1,0 +1,4 @@
+schema = "allodium.discussion/v0"
+id = "discussion-0001"
+title = "Allodium project discussion"
+state = "open"
