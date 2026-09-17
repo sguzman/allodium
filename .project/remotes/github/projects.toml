@@ -5,3 +5,4 @@ credential_env = "ALLODIUM_GITHUB_PROJECTS_TOKEN"
 
 [boards.board-0001]
 enabled = true
+target = "managed"

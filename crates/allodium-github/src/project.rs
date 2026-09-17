@@ -229,7 +229,7 @@ mod tests {
         fs::write(
             root.join(".project/remotes/github/projects.toml"),
             format!(
-                "schema = \"allodium.github.projects-projection/v0\"\nowner_kind = \"user\"\nowner = \"sguzman\"\ncredential_env = \"{credential_env}\"\n\n[boards.board-0001]\nenabled = true\n"
+                "schema = \"allodium.github.projects-projection/v0\"\nowner_kind = \"user\"\nowner = \"sguzman\"\ncredential_env = \"{credential_env}\"\n\n[boards.board-0001]\nenabled = true\ntarget = \"managed\"\n"
             ),
         )
         .unwrap();
