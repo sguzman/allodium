@@ -32,14 +32,14 @@ Canonical board membership should initially reference object families Allodium a
 - [x] Define views separately from board data so table/board/roadmap presentation does not redefine item state.
 - [x] Model board grouping as a view operation over a field; do not introduce canonical column objects merely because one provider renders columns.
 - [x] Validate duplicate IDs, dangling item references, unknown field references, invalid option references, and incompatible field values.
-- [ ] Keep GitHub Project number/node ID, item IDs, field IDs, option/iteration IDs, view IDs, URLs, and owner identity under `.project/remotes/github/` only.
+- [x] Keep GitHub Project number/node ID, item IDs, field IDs, option/iteration IDs, view IDs, URLs, and owner identity under `.project/remotes/github/` only.
 - [x] Require explicit provider configuration for the GitHub Project owner authority (`user` or `organization`) and projection target; do not infer cross-authority identity from matching names.
 - [x] Establish a separate Projects credential/capability boundary. Repository `GITHUB_TOKEN` must not be treated as sufficient Projects authority.
 - [x] When Projects credentials are absent, surface a non-mutating `projects_auth_required`/capability operation without blocking Issues, Reviews, Wiki, Releases, Milestones, Labels, or Discussions reconciliation.
 - [x] Keep Projects credentials environment/secret-only; never serialize tokens or derived secrets into `.project/`.
 - [x] Make GitHub Projects planning deterministic and network-free from canonical state plus persisted provider configuration/mappings/observations.
 - [x] Initially project only canonical object families with a defined identity mapping; do not invent canonical state for provider DraftIssue items.
-- [ ] Preserve provider-created items, field edits, and other foreign Project activity as GitHub-scoped evidence before deciding whether any subset should be promoted.
+- [x] Preserve provider-created items, field edits, and other foreign Project activity as GitHub-scoped evidence before deciding whether any subset should be promoted.
 - [ ] Use stable provider identities for mappings and optimistic observation checks before mutable writes.
 - [x] Do not implement destructive Project/item deletion until the canonical absence semantics are explicit.
 - [x] Add fixtures/tests that prove the canonical board model is independent of GitHub ProjectV2 IDs and provider view vocabulary.
@@ -69,7 +69,17 @@ The first identity gate intentionally failed before publication because two pre-
 
 Permanent sync run 188 subsequently checked out exactly `74d8e44f251977585ceccbd87ef1393384d7ae6a`, observed and re-observed every existing GitHub surface, retained the expected `wiki_bootstrap_required`, `discussions_bootstrap_required`, and `projects_auth_required` plan, performed zero Projects mutations, validated the repository, and ended with `No durable GitHub state change.` This proves the richer identity substrate composes cleanly with the no-Projects-credential degraded mode.
 
-The next Projects increment is read-only ProjectV2 observation and provider-state archival. It must populate and verify stable Project/item/field/option/view/content identities when separately authorized, preserve foreign Project and DraftIssue activity as provider evidence, and establish the observation basis for later optimistic mutation guards without promoting provider state into canonical state.
+## ProjectV2 observation progress
+
+Read-only ProjectV2 provider observation landed as `2af04abb6ec38e5ee78ac2067fb479afa211ed1c`. The provider observer normalizes Project metadata, fields, single-select options, iteration identities, views, items, supported field values, and Issue/PullRequest/DraftIssue content into GitHub-scoped observation files. Project, item, field, option, iteration, view, owner, URL, and content node identities remain in `.project/remotes/github/`; canonical board files remain provider-free.
+
+Provider-created DraftIssue items remain provider evidence rather than becoming canonical issues. Tests exercised an explicitly numbered existing Project containing a DraftIssue and iteration taxonomy, and verified that no canonical issue was created. A second test changed provider-only Project state, archived both previous and current snapshots under the GitHub remote incoming namespace, and then proved an identical re-observation creates no duplicate evidence. The observer also refuses to persist silently truncated Project connections when GitHub reports more than the v0 page cap.
+
+The observation gate failed twice before publication and both failures were kept outside product state. The first exposed integration skew: existing issue/PR test literals needed explicit synthetic node IDs and the old capability-plan apply operation needed to retain capability-only semantics. The second exposed an incorrect mock shape after identity establishment: first observation correctly binds an explicit existing Project by owner plus number, while subsequent observations correctly switch to the persisted Project node ID. After the mocks were corrected to model that identity progression, the self-cleaning gate passed 81 core tests, 8 checked-in fixture tests, the ingress idempotence test, and 42 GitHub adapter tests, plus formatting and repository validation, then repeated the complete suite after rebase before publishing.
+
+Permanent sync run 193 then checked out exactly `2af04abb6ec38e5ee78ac2067fb479afa211ed1c`. Without a separate Projects credential it still harvested the stable GitHub content node identities for the two canonical board members, `issue-0010` and `issue-0011`, during ordinary repository observation. It observed two content identities on both observation passes, observed zero ProjectV2 projects and zero Project items, archived zero Project provider changes, and retained exactly the known `wiki_bootstrap_required`, `discussions_bootstrap_required`, and `projects_auth_required` plan. Apply performed no Projects mutation and validation passed. The sync committed the two durable content-identity records as generated provider state in `4fb8801`.
+
+The remaining Projects work is now the non-destructive mutation runtime. Mutable work must require separately authenticated Projects authority, use the stable provider identities and persisted observations established above, refuse stale writes, stage Project item membership separately from field-value mutation, preserve foreign provider state before overwriting managed fields, and continue to assign no deletion meaning to canonical absence.
 
 ## Design constraints
 
