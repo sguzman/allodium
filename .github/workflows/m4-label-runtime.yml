@@ -22,6 +22,7 @@ jobs:
         run: |
           python .github/allodium-m4-label-runtime.py
           python .github/allodium-m4-label-report-normalizer.py
+          python .github/allodium-m4-label-cli-normalizer.py
       - name: Format generated integration
         run: |
           cargo fmt --all
@@ -39,6 +40,7 @@ jobs:
         run: |
           rm .github/allodium-m4-label-runtime.py
           rm .github/allodium-m4-label-report-normalizer.py
+          rm .github/allodium-m4-label-cli-normalizer.py
           rm .github/workflows/m4-label-runtime.yml
           git add crates/allodium-core/src/github_label.rs crates/allodium-github/src/label.rs crates/allodium-github/src/lib.rs crates/allodium-cli/src/main.rs .github
           git config user.name 'Allodium implementation gate'
