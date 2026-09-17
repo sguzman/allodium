@@ -7,6 +7,16 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
         raise SystemExit(f"{label}: expected exactly one anchor, found {count}")
     return text.replace(old, new, 1)
 
+social_path = Path("crates/allodium-github/src/discussion_ingress.rs")
+social = social_path.read_text()
+social = replace_once(
+    social,
+    "                created_at: state.root.created_at.clone(),\n                updated_at: state.root.updated_at.clone(),",
+    "                created_at: Some(state.root.created_at.clone()),\n                updated_at: Some(state.root.updated_at.clone()),",
+    "Discussion social IncomingSource timestamps",
+)
+social_path.write_text(social)
+
 lib_path = Path("crates/allodium-github/src/lib.rs")
 lib = lib_path.read_text()
 lib = replace_once(
@@ -31,6 +41,18 @@ lib_path.write_text(lib)
 
 discussion_path = Path("crates/allodium-github/src/discussion.rs")
 discussion = discussion_path.read_text()
+discussion = replace_once(
+    discussion,
+    "    DISCUSSION_MAPPINGS_SCHEMA_V0, DiscussionMapping, DiscussionMappings,\n",
+    "    DiscussionMapping,\n",
+    "Discussion runtime production imports",
+)
+discussion = replace_once(
+    discussion,
+    "        DiscussionProjectionBinding, DiscussionProjectionConfig, write_observed_discussion_snapshot,\n",
+    "        DISCUSSION_MAPPINGS_SCHEMA_V0, DiscussionMappings, write_observed_discussion_snapshot,\n",
+    "Discussion runtime test imports",
+)
 discussion = replace_once(
     discussion,
     "    pub managed_changes_archived: usize,\n}",
