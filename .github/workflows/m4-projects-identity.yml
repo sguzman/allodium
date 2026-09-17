@@ -1,0 +1,61 @@
+name: M4 Projects identity substrate gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/m4-projects-identity.yml'
+      - '.github/m4-projects-identity.py'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+      - name: Materialize Projects identity substrate
+        run: |
+          python .github/m4-projects-identity.py
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/projects-identity-plan.toml
+          cat /tmp/projects-identity-plan.toml
+          grep -q 'action = "projects_auth_required"' /tmp/projects-identity-plan.toml
+          if grep -q 'delete_project' /tmp/projects-identity-plan.toml; then
+            echo 'Projects identity substrate unexpectedly planned destructive work' >&2
+            exit 1
+          fi
+      - name: Publish clean Projects identity substrate
+        run: |
+          set -euo pipefail
+          git config user.name 'Allodium implementation gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/m4-projects-identity.yml
+          git rm .github/m4-projects-identity.py
+          git add crates/allodium-core/src/github_project.rs
+          git add .project/remotes/github/projects.toml
+          git add docs/github-projects-provider-v0.md
+          git commit -m 'feat(github): add Projects provider identity substrate'
+          git fetch origin main
+          git rebase origin/main
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/rebased-projects-identity-plan.toml
+          grep -q 'action = "projects_auth_required"' /tmp/rebased-projects-identity-plan.toml
+          if grep -q 'delete_project' /tmp/rebased-projects-identity-plan.toml; then
+            echo 'Projects identity substrate unexpectedly planned destructive work after rebase' >&2
+            exit 1
+          fi
+          git push origin HEAD:main
