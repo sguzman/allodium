@@ -1,0 +1,49 @@
+name: M4 label core gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/allodium-m4-label-core.py'
+      - '.github/workflows/m4-label-core.yml'
+      - 'crates/allodium-core/src/label.rs'
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+      - name: Apply label core integration
+        run: python .github/allodium-m4-label-core.py
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Validate Allodium state
+        run: cargo run --locked -p allodium-cli -- validate .
+      - name: Publish product and self-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/allodium-m4-label-core.py .github/workflows/m4-label-core.yml
+          git add crates/allodium-core/src/lib.rs crates/allodium-core/src/label.rs
+          if git diff --cached --quiet; then
+            echo 'No product changes to publish.'
+            exit 0
+          fi
+          git config user.name 'Allodium implementation gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git commit -m 'feat(core): add canonical label records'
+          git fetch origin main
+          git rebase origin/main
+          cargo run --locked -p allodium-cli -- validate .
+          git push origin HEAD:main
