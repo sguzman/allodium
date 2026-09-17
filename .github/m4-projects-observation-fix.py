@@ -68,6 +68,37 @@ if "pub(super) fn observe_projects_capabilities(" not in text:
     if marker not in text:
         raise SystemExit("observe_projects insertion point not found")
     text = text.replace(marker, compat + marker, 1)
+
+old_second = '''        let second = provider_project_json("Doing", "Draft edited", "2026-09-17T20:02:00Z");
+'''
+new_second = '''        let second = provider_project_node_json("Doing", "Draft edited", "2026-09-17T20:02:00Z");
+'''
+if old_second not in text:
+    raise SystemExit("ProjectV2 drift test second-observation fixture not found")
+text = text.replace(old_second, new_second, 1)
+
+function_marker = '''    fn test_root(name: &str) -> PathBuf {
+'''
+node_fixture = r'''    fn provider_project_node_json(
+        option_name: &str,
+        draft_title: &str,
+        updated_at: &str,
+    ) -> String {
+        let document: serde_json::Value =
+            serde_json::from_str(&provider_project_json(option_name, draft_title, updated_at))
+                .unwrap();
+        let project = document
+            .pointer("/data/user/projectV2")
+            .expect("provider project fixture has user.projectV2")
+            .clone();
+        json!({ "data": { "node": project } }).to_string()
+    }
+
+'''
+if "fn provider_project_node_json(" not in text:
+    if function_marker not in text:
+        raise SystemExit("ProjectV2 test helper insertion point not found")
+    text = text.replace(function_marker, node_fixture + function_marker, 1)
 project.write_text(text)
 
 adapter = Path("crates/allodium-github/src/lib.rs")
