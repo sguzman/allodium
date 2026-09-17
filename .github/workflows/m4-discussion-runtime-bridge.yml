@@ -1,0 +1,114 @@
+name: M4 Discussion runtime bridge gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/m4-discussion-runtime-bridge.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+          components: rustfmt
+      - name: Wire safe Discussion bridge
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          lib = Path('crates/allodium-github/src/lib.rs')
+          text = lib.read_text()
+          if 'mod discussion;\n' not in text:
+              text = text.replace('mod label;\n', 'mod discussion;\nmod label;\n', 1)
+
+          old = '''    pub labels_observed: usize,\n    pub label_managed_changes_archived: usize,\n'''
+          new = '''    pub labels_observed: usize,\n    pub label_managed_changes_archived: usize,\n    pub discussion_capabilities_observed: usize,\n'''
+          if 'pub discussion_capabilities_observed: usize,' not in text:
+              if old not in text:
+                  raise SystemExit('ObserveReport anchor missing')
+              text = text.replace(old, new, 1)
+
+          old = '''    pub labels_created: usize,\n    pub labels_updated: usize,\n    pub labels_observed: usize,\n}\n'''
+          new = '''    pub labels_created: usize,\n    pub labels_updated: usize,\n    pub labels_observed: usize,\n    pub discussion_capabilities_observed: usize,\n    pub discussions_bootstrap_required: usize,\n}\n'''
+          if 'pub discussions_bootstrap_required: usize,' not in text:
+              if old not in text:
+                  raise SystemExit('ApplyReport anchor missing')
+              text = text.replace(old, new, 1)
+
+          marker = '''        let label_report = label::observe_labels(self, root, remote_name)?;\n        report.labels_observed += label_report.observed;\n        report.label_managed_changes_archived += label_report.managed_changes_archived;\n\n'''
+          addition = marker + '''        let discussion_report = discussion::observe_discussions(self, root, remote_name)?;\n        report.discussion_capabilities_observed += discussion_report.capabilities_observed;\n\n'''
+          if 'discussion::observe_discussions(self, root, remote_name)?' not in text:
+              if marker not in text:
+                  raise SystemExit('observe integration anchor missing')
+              text = text.replace(marker, addition, 1)
+
+          marker = '''                "observe_wiki" => {\n'''
+          cases = '''                "observe_discussion_capabilities" => {\n                    discussion::apply_observe_discussion_capabilities(\n                        self,\n                        root,\n                        &plan.remote,\n                    )?;\n                    report.discussion_capabilities_observed += 1;\n                }\n                "discussions_bootstrap_required" => {\n                    report.discussions_bootstrap_required += 1;\n                }\n'''
+          if '"discussions_bootstrap_required" => {' not in text:
+              if marker not in text:
+                  raise SystemExit('apply integration anchor missing')
+              text = text.replace(marker, cases + marker, 1)
+          lib.write_text(text)
+
+          cli = Path('crates/allodium-cli/src/main.rs')
+          text = cli.read_text()
+          marker = '''        plan.operations.extend(label_plan.operations);\n        Ok(plan)\n'''
+          addition = '''        plan.operations.extend(label_plan.operations);\n\n        let discussion_plan =\n            allodium_core::github_discussion::plan_discussions(&root, remote_name)?;\n        if plan.remote != discussion_plan.remote || plan.repository != discussion_plan.repository {\n            return Err(\n                "GitHub Discussion projection plan disagrees about the configured remote".into(),\n            );\n        }\n        plan.operations.extend(discussion_plan.operations);\n        Ok(plan)\n'''
+          if 'github_discussion::plan_discussions' not in text:
+              if marker not in text:
+                  raise SystemExit('CLI plan anchor missing')
+              text = text.replace(marker, addition, 1)
+
+          marker = '''            println!("observed {} GitHub label(s)", report.labels_observed);\n'''
+          addition = marker + '''            println!(\n                "observed {} GitHub Discussion capability snapshot(s)",\n                report.discussion_capabilities_observed\n            );\n'''
+          if 'Discussion capability snapshot(s)' not in text:
+              if marker not in text:
+                  raise SystemExit('CLI observe anchor missing')
+              text = text.replace(marker, addition, 1)
+
+          marker = '''            println!("observed {} GitHub label(s)", report.labels_observed);\n            ExitCode::SUCCESS\n'''
+          addition = '''            println!("observed {} GitHub label(s)", report.labels_observed);\n            println!(\n                "observed {} GitHub Discussion capability snapshot(s)",\n                report.discussion_capabilities_observed\n            );\n            println!(\n                "{} GitHub Discussion projection(s) require provider bootstrap",\n                report.discussions_bootstrap_required\n            );\n            ExitCode::SUCCESS\n'''
+          # Replace the apply-branch occurrence only; the observe branch no longer has this exact suffix.
+          if 'Discussion projection(s) require provider bootstrap' not in text:
+              if marker not in text:
+                  raise SystemExit('CLI apply anchor missing')
+              text = text.replace(marker, addition, 1)
+          cli.write_text(text)
+          PY
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/discussion-plan.toml
+          cat /tmp/discussion-plan.toml
+          grep -q 'action = "observe_discussion_capabilities"' /tmp/discussion-plan.toml
+          if grep -q 'action = "create_discussion"' /tmp/discussion-plan.toml; then
+            echo 'Discussion creation became reachable before capability observation' >&2
+            exit 1
+          fi
+      - name: Publish clean safe bridge
+        run: |
+          set -euo pipefail
+          git config user.name 'Allodium implementation gate'
+          git config user.email 'actions@users.noreply.github.com'
+          git rm .github/workflows/m4-discussion-runtime-bridge.yml
+          git add crates/allodium-github/src/lib.rs crates/allodium-github/src/discussion.rs crates/allodium-cli/src/main.rs
+          git commit -m 'feat(github): observe Discussion capability boundary'
+          git fetch origin main
+          git rebase origin/main
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo run --locked -p allodium-cli -- validate .
+          cargo run --locked -p allodium-cli -- github plan . github > /tmp/discussion-plan.toml
+          grep -q 'action = "observe_discussion_capabilities"' /tmp/discussion-plan.toml
+          git push origin HEAD:main
